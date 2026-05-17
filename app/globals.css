@@ -349,6 +349,13 @@ select {
   font-size: 0.86rem;
 }
 
+.roleChecks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin-top: 4px;
+}
+
 .fullWidth {
   grid-column: 1 / -1;
 }
@@ -372,6 +379,12 @@ select {
   background: #f9fbfd;
   padding: 10px 12px;
   font-size: 0.9rem;
+}
+
+.sectionDivider {
+  border: 0;
+  border-top: 1px solid #e3e9f1;
+  margin: 18px 0 12px;
 }
 
 @media (max-width: 920px) {

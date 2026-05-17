@@ -45,6 +45,21 @@ type Role = {
   display_order: number;
 };
 
+type Employee = {
+  id: string;
+  tenant_id: string;
+  employee_code_4: string;
+  name: string;
+  line_user_id: string | null;
+  is_active: boolean;
+  joined_on: string | null;
+};
+
+type EmployeeRoleAssignment = {
+  employee_id: string;
+  role_id: string;
+};
+
 type CustomerForm = {
   id?: string;
   customerCode: string;
@@ -55,6 +70,15 @@ type CustomerForm = {
   status: "active" | "paused" | "canceled";
 };
 
+type EmployeeForm = {
+  id?: string;
+  employeeCode4: string;
+  name: string;
+  joinedOn: string;
+  isActive: boolean;
+  roleIds: string[];
+};
+
 function createEmptyCustomerForm(): CustomerForm {
   return {
     customerCode: "",
@@ -63,6 +87,16 @@ function createEmptyCustomerForm(): CustomerForm {
     postalCode: "",
     address: "",
     status: "active",
+  };
+}
+
+function createEmptyEmployeeForm(): EmployeeForm {
+  return {
+    employeeCode4: "",
+    name: "",
+    joinedOn: "",
+    isActive: true,
+    roleIds: [],
   };
 }
 
@@ -80,6 +114,8 @@ export function PcAdminApp() {
   const [fixes, setFixes] = useState<AttendanceFix[]>([]);
   const [leaves, setLeaves] = useState<LeaveRequest[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [employeeAssignments, setEmployeeAssignments] = useState<EmployeeRoleAssignment[]>([]);
 
   const [roleCode, setRoleCode] = useState("");
   const [roleName, setRoleName] = useState("");
@@ -97,6 +133,11 @@ export function PcAdminApp() {
 
   const [showPendingFixOnly, setShowPendingFixOnly] = useState(true);
   const [showPendingLeaveOnly, setShowPendingLeaveOnly] = useState(true);
+  const [employeeQuery, setEmployeeQuery] = useState("");
+  const [employeeStatusFilter, setEmployeeStatusFilter] = useState<"all" | "active" | "retired">("all");
+  const [employeeView, setEmployeeView] = useState<"list" | "form">("list");
+  const [employeeForm, setEmployeeForm] = useState<EmployeeForm>(createEmptyEmployeeForm());
+  const [isSavingEmployee, setIsSavingEmployee] = useState(false);
 
   const pendingFixCount = fixes.filter((row) => row.status === "pending").length;
   const pendingLeaveCount = leaves.filter((row) => row.status === "pending").length;
@@ -109,7 +150,7 @@ export function PcAdminApp() {
   }, []);
 
   async function loadAll() {
-    await Promise.all([loadCustomers(), loadFixes(), loadLeaves(), loadRoles()]);
+    await Promise.all([loadCustomers(), loadFixes(), loadLeaves(), loadRoles(), loadEmployees()]);
   }
 
   async function loadCustomers() {
@@ -138,6 +179,14 @@ export function PcAdminApp() {
     const json = await res.json();
     if (!json.ok) return setError(json.message ?? "役割取得失敗");
     setRoles(json.rows);
+  }
+
+  async function loadEmployees() {
+    const res = await fetch("/api/admin/employees");
+    const json = await res.json();
+    if (!json.ok) return setError(json.message ?? "従業員取得失敗");
+    setEmployees(json.rows ?? []);
+    setEmployeeAssignments(json.assignments ?? []);
   }
 
   async function processFix(id: string, action: "approved" | "rejected") {
@@ -204,6 +253,33 @@ export function PcAdminApp() {
     }
   }
 
+  async function saveEmployee() {
+    if (!employeeForm.employeeCode4.trim() || !employeeForm.name.trim()) {
+      setError("従業員コード4桁と氏名は必須です。");
+      return;
+    }
+    setIsSavingEmployee(true);
+    setError(null);
+    try {
+      const method = employeeForm.id ? "PATCH" : "POST";
+      const res = await fetch("/api/admin/employees", {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(employeeForm),
+      });
+      const json = await res.json();
+      if (!json.ok) {
+        setError(json.message ?? "従業員保存失敗");
+        return;
+      }
+      await loadEmployees();
+      setEmployeeForm(createEmptyEmployeeForm());
+      setEmployeeView("list");
+    } finally {
+      setIsSavingEmployee(false);
+    }
+  }
+
   function handleLogout() {
     setError("ログアウト機能は準備中です。");
   }
@@ -227,6 +303,28 @@ export function PcAdminApp() {
     });
     setSelectedCustomerId(target.id);
     setCustomerView("form");
+    setError(null);
+  }
+
+  function openEmployeeNewForm() {
+    setEmployeeForm(createEmptyEmployeeForm());
+    setEmployeeView("form");
+    setError(null);
+  }
+
+  function openEmployeeEditForm(target: Employee) {
+    const roleIds = employeeAssignments
+      .filter((item) => item.employee_id === target.id)
+      .map((item) => item.role_id);
+    setEmployeeForm({
+      id: target.id,
+      employeeCode4: target.employee_code_4,
+      name: target.name,
+      joinedOn: target.joined_on ?? "",
+      isActive: target.is_active,
+      roleIds,
+    });
+    setEmployeeView("form");
     setError(null);
   }
 
@@ -290,6 +388,22 @@ export function PcAdminApp() {
     if (!showPendingLeaveOnly) return leaves;
     return leaves.filter((row) => row.status === "pending");
   }, [leaves, showPendingLeaveOnly]);
+
+  const roleNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    roles.forEach((row) => map.set(row.id, row.role_name));
+    return map;
+  }, [roles]);
+
+  const filteredEmployees = useMemo(() => {
+    const q = employeeQuery.trim().toLowerCase();
+    return employees.filter((row) => {
+      if (employeeStatusFilter === "active" && !row.is_active) return false;
+      if (employeeStatusFilter === "retired" && row.is_active) return false;
+      if (!q) return true;
+      return row.employee_code_4.toLowerCase().includes(q) || row.name.toLowerCase().includes(q);
+    });
+  }, [employeeQuery, employeeStatusFilter, employees]);
 
   function exportCustomerCsv() {
     const header = ["顧客コード", "顧客名", "電話", "郵便番号", "住所", "LINE連携", "状態"];
@@ -756,40 +870,187 @@ export function PcAdminApp() {
 
           {tab === "roles" && (
             <section className="panel">
-          <h2>役割定義マスター</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>コード</th>
-                <th>名称</th>
-                <th>説明</th>
-                <th>表示順</th>
-                <th>有効</th>
-              </tr>
-            </thead>
-            <tbody>
-              {roles.map((row) => (
-                <tr key={row.id}>
-                  <td>{row.role_code}</td>
-                  <td>{row.role_name}</td>
-                  <td>{row.description ?? "-"}</td>
-                  <td>{row.display_order}</td>
-                  <td>{row.is_active ? "有効" : "無効"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              <div className="sectionHeader">
+                <h2>従業員管理（M-10）</h2>
+                <div className="headerActions">
+                  {employeeView === "list" && (
+                    <button type="button" className="primary" onClick={openEmployeeNewForm}>
+                      + 新規登録
+                    </button>
+                  )}
+                  {employeeView === "form" && (
+                    <button type="button" onClick={() => setEmployeeView("list")}>
+                      一覧へ戻る
+                    </button>
+                  )}
+                </div>
+              </div>
 
-          <div className="formRow">
-            <input placeholder="role_code" value={roleCode} onChange={(e) => setRoleCode(e.target.value)} />
-            <input placeholder="role_name" value={roleName} onChange={(e) => setRoleName(e.target.value)} />
-            <input
-              placeholder="description"
-              value={roleDescription}
-              onChange={(e) => setRoleDescription(e.target.value)}
-            />
-            <button onClick={() => void createRole()}>追加</button>
-          </div>
+              {employeeView === "list" && (
+                <>
+                  <div className="filterRow">
+                    <input
+                      placeholder="従業員コード / 氏名"
+                      value={employeeQuery}
+                      onChange={(e) => setEmployeeQuery(e.target.value)}
+                    />
+                    <select
+                      value={employeeStatusFilter}
+                      onChange={(e) => setEmployeeStatusFilter(e.target.value as "all" | "active" | "retired")}
+                    >
+                      <option value="all">状態: すべて</option>
+                      <option value="active">在籍</option>
+                      <option value="retired">退職</option>
+                    </select>
+                  </div>
+
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>従業員コード</th>
+                        <th>氏名</th>
+                        <th>役割</th>
+                        <th>LINE</th>
+                        <th>状態</th>
+                        <th>入社日</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredEmployees.map((row) => {
+                        const roleNames = employeeAssignments
+                          .filter((item) => item.employee_id === row.id)
+                          .map((item) => roleNameById.get(item.role_id) ?? item.role_id);
+                        return (
+                          <tr key={row.id}>
+                            <td>{row.employee_code_4}</td>
+                            <td>{row.name}</td>
+                            <td>{roleNames.length > 0 ? roleNames.join(", ") : "-"}</td>
+                            <td>{row.line_user_id ? "連携済" : "未連携"}</td>
+                            <td>{row.is_active ? "在籍" : "退職"}</td>
+                            <td>{row.joined_on ?? "-"}</td>
+                            <td className="actions">
+                              <button type="button" className="primary" onClick={() => openEmployeeEditForm(row)}>
+                                編集
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </>
+              )}
+
+              {employeeView === "form" && (
+                <div className="formCard">
+                  <h3>{employeeForm.id ? "従業員編集" : "従業員新規登録"}</h3>
+                  <div className="formGrid2">
+                    <label>
+                      従業員コード4桁 *
+                      <input
+                        maxLength={4}
+                        value={employeeForm.employeeCode4}
+                        onChange={(e) =>
+                          setEmployeeForm((prev) => ({
+                            ...prev,
+                            employeeCode4: e.target.value.replace(/[^\d]/g, "").slice(0, 4),
+                          }))
+                        }
+                      />
+                    </label>
+                    <label>
+                      氏名 *
+                      <input
+                        value={employeeForm.name}
+                        onChange={(e) => setEmployeeForm((prev) => ({ ...prev, name: e.target.value }))}
+                      />
+                    </label>
+                    <label>
+                      入社日
+                      <input
+                        type="date"
+                        value={employeeForm.joinedOn}
+                        onChange={(e) => setEmployeeForm((prev) => ({ ...prev, joinedOn: e.target.value }))}
+                      />
+                    </label>
+                    <label className="checkLabel">
+                      <input
+                        type="checkbox"
+                        checked={employeeForm.isActive}
+                        onChange={(e) => setEmployeeForm((prev) => ({ ...prev, isActive: e.target.checked }))}
+                      />
+                      在籍中
+                    </label>
+                    <label className="fullWidth">
+                      役割（複数選択）
+                      <div className="roleChecks">
+                        {roles.map((role) => (
+                          <label key={role.id} className="checkLabel">
+                            <input
+                              type="checkbox"
+                              checked={employeeForm.roleIds.includes(role.id)}
+                              onChange={(e) => {
+                                setEmployeeForm((prev) => {
+                                  const roleIds = e.target.checked
+                                    ? [...prev.roleIds, role.id]
+                                    : prev.roleIds.filter((id) => id !== role.id);
+                                  return { ...prev, roleIds };
+                                });
+                              }}
+                            />
+                            {role.role_name}
+                          </label>
+                        ))}
+                      </div>
+                    </label>
+                  </div>
+                  <div className="headerActions">
+                    <button type="button" onClick={() => setEmployeeView("list")}>
+                      キャンセル
+                    </button>
+                    <button type="button" className="primary" onClick={() => void saveEmployee()} disabled={isSavingEmployee}>
+                      {isSavingEmployee ? "保存中..." : "保存"}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <hr className="sectionDivider" />
+              <h3>役割定義マスター</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th>コード</th>
+                    <th>名称</th>
+                    <th>説明</th>
+                    <th>表示順</th>
+                    <th>有効</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {roles.map((row) => (
+                    <tr key={row.id}>
+                      <td>{row.role_code}</td>
+                      <td>{row.role_name}</td>
+                      <td>{row.description ?? "-"}</td>
+                      <td>{row.display_order}</td>
+                      <td>{row.is_active ? "有効" : "無効"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div className="formRow">
+                <input placeholder="role_code" value={roleCode} onChange={(e) => setRoleCode(e.target.value)} />
+                <input placeholder="role_name" value={roleName} onChange={(e) => setRoleName(e.target.value)} />
+                <input
+                  placeholder="description"
+                  value={roleDescription}
+                  onChange={(e) => setRoleDescription(e.target.value)}
+                />
+                <button onClick={() => void createRole()}>追加</button>
+              </div>
             </section>
           )}
 

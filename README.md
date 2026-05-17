@@ -1,4 +1,4 @@
-# pc-app
+# dream-PC-app
 
 管理Web（PC）の実装です。  
 以下の主要画面を実装しています。

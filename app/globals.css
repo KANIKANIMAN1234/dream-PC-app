@@ -202,6 +202,49 @@ body {
   margin-top: 0;
 }
 
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.sectionHeader h2 {
+  margin: 0;
+}
+
+.headerActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.headerActions button,
+.actions .secondary,
+.actions .primary {
+  border: 1px solid #d0d8e2;
+  background: #fff;
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: #334;
+  cursor: pointer;
+}
+
+.headerActions .primary,
+.actions .primary {
+  background: #2d6a9f;
+  border-color: #2d6a9f;
+  color: #fff;
+}
+
+.filterRow {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -220,7 +263,8 @@ td {
   gap: 8px;
 }
 
-.actions button {
+.actions .approve,
+.actions .reject {
   border: 0;
   border-radius: 8px;
   padding: 8px 10px;
@@ -252,6 +296,84 @@ input {
   padding: 8px 10px;
 }
 
+select {
+  border: 1px solid #c9d5e2;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fff;
+}
+
+.pager {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  font-size: 0.86rem;
+}
+
+.pager button {
+  border: 1px solid #d0d8e2;
+  background: #fff;
+  border-radius: 6px;
+  padding: 5px 10px;
+}
+
+.detailCard,
+.formCard {
+  border: 1px solid #ebeff4;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfdff;
+}
+
+.detailGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 14px;
+  margin-bottom: 12px;
+  font-size: 0.92rem;
+}
+
+.formGrid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.formGrid2 label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 0.86rem;
+}
+
+.fullWidth {
+  grid-column: 1 / -1;
+}
+
+.checkLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.84rem;
+  color: #556;
+}
+
+.noticeList {
+  display: grid;
+  gap: 8px;
+}
+
+.noticeItem {
+  border: 1px solid #e7edf4;
+  border-radius: 8px;
+  background: #f9fbfd;
+  padding: 10px 12px;
+  font-size: 0.9rem;
+}
+
 @media (max-width: 920px) {
   .container {
     height: auto;
@@ -276,5 +398,14 @@ input {
     width: 100%;
     border-right: 0;
     border-bottom: 1px solid #e8eaf0;
+  }
+
+  .filterRow {
+    grid-template-columns: 1fr;
+  }
+
+  .formGrid2,
+  .detailGrid {
+    grid-template-columns: 1fr;
   }
 }

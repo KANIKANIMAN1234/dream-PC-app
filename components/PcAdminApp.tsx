@@ -56,6 +56,9 @@ export function PcAdminApp() {
   const [roleCode, setRoleCode] = useState("");
   const [roleName, setRoleName] = useState("");
   const [roleDescription, setRoleDescription] = useState("");
+  const pendingFixCount = fixes.filter((row) => row.status === "pending").length;
+  const mockOcrPendingCount = 3;
+  const headerNotifCount = pendingFixCount + mockOcrPendingCount;
 
   useEffect(() => {
     void loadAll();
@@ -136,17 +139,134 @@ export function PcAdminApp() {
         <div className="muted">M-01 / M-06 / M-10 の主要機能を実装</div>
       </header>
 
-      {error && <p className="panel">{error}</p>}
+      <div className="layout">
+        <aside className="sidebar">
+          <div className="sidebarTop">
+            <div className="sidebarBrand">ドリー夢 <span>管理Web</span></div>
+            <div className="sidebarMeta">
+              <span className="sidebarStore">狭山店</span>
+              <button
+                type="button"
+                className="sidebarNotif"
+                title="通知"
+                onClick={() => {
+                  setTab("attendanceFix");
+                }}
+              >
+                🔔
+                {headerNotifCount > 0 && <span className="sidebarNotifBadge">{headerNotifCount}</span>}
+              </button>
+            </div>
+            <div className="sidebarUser">担当者: 田中 管理者</div>
+          </div>
 
-      <nav className="tabs">
-        <button onClick={() => setTab("customers")}>M-01 顧客管理</button>
-        <button onClick={() => setTab("attendanceFix")}>M-06-FIX 勤怠修正承認</button>
-        <button onClick={() => setTab("leave")}>M-06-LEAVE 休暇承認</button>
-        <button onClick={() => setTab("roles")}>M-10-ROLE 役割定義</button>
-      </nav>
+          <div className="navSection">顧客・注文</div>
+          <button
+            className={`navItem${tab === "customers" ? " active" : ""}`}
+            onClick={() => setTab("customers")}
+          >
+            <span className="navMain">
+              <span className="navIcon">👥</span>
+              顧客管理
+            </span>
+          </button>
+          <button className="navItem disabled" type="button" disabled>
+            <span className="navMain">
+              <span className="navIcon">📋</span>
+              注文管理
+            </span>
+          </button>
 
-      {tab === "customers" && (
-        <section className="panel">
+          <div className="navSection">商品・物流</div>
+          <button className="navItem disabled" type="button" disabled>
+            <span className="navMain">
+              <span className="navIcon">📦</span>
+              発注管理
+            </span>
+            <span className="navBadge">!</span>
+          </button>
+          <button className="navItem disabled" type="button" disabled>
+            <span className="navMain">
+              <span className="navIcon">🏪</span>
+              在庫管理
+            </span>
+          </button>
+          <button className="navItem disabled" type="button" disabled>
+            <span className="navMain">
+              <span className="navIcon">🚚</span>
+              配達管理
+            </span>
+          </button>
+
+          <div className="navSection">管理・分析</div>
+          <button
+            className={`navItem${tab === "attendanceFix" ? " active" : ""}`}
+            onClick={() => setTab("attendanceFix")}
+          >
+            <span className="navMain">
+              <span className="navIcon">⏰</span>
+              勤怠管理
+            </span>
+            {pendingFixCount > 0 && <span className="navBadge">{pendingFixCount}</span>}
+          </button>
+          <button className="navItem disabled" type="button" disabled>
+            <span className="navMain">
+              <span className="navIcon">📊</span>
+              売上分析
+            </span>
+          </button>
+          <button className="navItem disabled" type="button" disabled>
+            <span className="navMain">
+              <span className="navIcon">🤖</span>
+              AI-OCR承認
+            </span>
+            <span className="navBadge">{mockOcrPendingCount}</span>
+          </button>
+
+          <div className="navSection">従業員・集金</div>
+          <button
+            className={`navItem${tab === "leave" ? " active" : ""}`}
+            onClick={() => setTab("leave")}
+          >
+            <span className="navMain">
+              <span className="navIcon">🏖️</span>
+              休暇申請
+            </span>
+          </button>
+          <button
+            className={`navItem${tab === "roles" ? " active" : ""}`}
+            onClick={() => setTab("roles")}
+          >
+            <span className="navMain">
+              <span className="navIcon">👤</span>
+              従業員管理
+            </span>
+          </button>
+          <button className="navItem disabled" type="button" disabled>
+            <span className="navMain">
+              <span className="navIcon">📢</span>
+              通知配信
+            </span>
+          </button>
+          <button className="navItem disabled" type="button" disabled>
+            <span className="navMain">
+              <span className="navIcon">📄</span>
+              定型外注文
+            </span>
+          </button>
+          <button className="navItem disabled" type="button" disabled>
+            <span className="navMain">
+              <span className="navIcon">💰</span>
+              集金管理
+            </span>
+          </button>
+        </aside>
+
+        <div className="content">
+          {error && <p className="panel">{error}</p>}
+
+          {tab === "customers" && (
+            <section className="panel">
           <h2>顧客一覧</h2>
           <table>
             <thead>
@@ -172,11 +292,11 @@ export function PcAdminApp() {
               ))}
             </tbody>
           </table>
-        </section>
-      )}
+            </section>
+          )}
 
-      {tab === "attendanceFix" && (
-        <section className="panel">
+          {tab === "attendanceFix" && (
+            <section className="panel">
           <h2>勤怠修正申請（承認/却下）</h2>
           <table>
             <thead>
@@ -213,11 +333,11 @@ export function PcAdminApp() {
               ))}
             </tbody>
           </table>
-        </section>
-      )}
+            </section>
+          )}
 
-      {tab === "leave" && (
-        <section className="panel">
+          {tab === "leave" && (
+            <section className="panel">
           <h2>休暇申請（承認/却下）</h2>
           <table>
             <thead>
@@ -252,11 +372,11 @@ export function PcAdminApp() {
               ))}
             </tbody>
           </table>
-        </section>
-      )}
+            </section>
+          )}
 
-      {tab === "roles" && (
-        <section className="panel">
+          {tab === "roles" && (
+            <section className="panel">
           <h2>役割定義マスター</h2>
           <table>
             <thead>
@@ -291,8 +411,10 @@ export function PcAdminApp() {
             />
             <button onClick={() => void createRole()}>追加</button>
           </div>
-        </section>
-      )}
+            </section>
+          )}
+        </div>
+      </div>
     </main>
   );
 }

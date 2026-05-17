@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-type Tab = "customers" | "attendanceFix" | "leave" | "roles";
+type Tab = "customers" | "attendanceFix" | "leave" | "roles" | "notifications";
 
 type Customer = {
   id: string;
@@ -132,34 +132,37 @@ export function PcAdminApp() {
     await loadRoles();
   }
 
+  function handleLogout() {
+    setError("ログアウト機能は準備中です。");
+  }
+
   return (
     <main className="container">
-      <header className="header">
-        <h1>管理Web（PC）</h1>
-        <div className="muted">M-01 / M-06 / M-10 の主要機能を実装</div>
+      <header className="topHeader">
+        <div className="headerBrand">
+          ドリー夢 <span>管理Web</span>
+        </div>
+        <div className="headerStore">狭山店</div>
+        <div className="headerSpacer" />
+        <button
+          type="button"
+          className="headerNotif"
+          title="通知"
+          onClick={() => {
+            setTab("notifications");
+          }}
+        >
+          🔔
+          {headerNotifCount > 0 && <span className="headerNotifBadge">{headerNotifCount}</span>}
+        </button>
+        <div className="headerUser">田中 管理者</div>
+        <button type="button" className="logoutBtn" onClick={handleLogout}>
+          ログアウト
+        </button>
       </header>
 
       <div className="layout">
         <aside className="sidebar">
-          <div className="sidebarTop">
-            <div className="sidebarBrand">ドリー夢 <span>管理Web</span></div>
-            <div className="sidebarMeta">
-              <span className="sidebarStore">狭山店</span>
-              <button
-                type="button"
-                className="sidebarNotif"
-                title="通知"
-                onClick={() => {
-                  setTab("attendanceFix");
-                }}
-              >
-                🔔
-                {headerNotifCount > 0 && <span className="sidebarNotifBadge">{headerNotifCount}</span>}
-              </button>
-            </div>
-            <div className="sidebarUser">担当者: 田中 管理者</div>
-          </div>
-
           <div className="navSection">顧客・注文</div>
           <button
             className={`navItem${tab === "customers" ? " active" : ""}`}
@@ -242,11 +245,15 @@ export function PcAdminApp() {
               従業員管理
             </span>
           </button>
-          <button className="navItem disabled" type="button" disabled>
+          <button
+            className={`navItem${tab === "notifications" ? " active" : ""}`}
+            onClick={() => setTab("notifications")}
+          >
             <span className="navMain">
               <span className="navIcon">📢</span>
               通知配信
             </span>
+            {headerNotifCount > 0 && <span className="navBadge">{headerNotifCount}</span>}
           </button>
           <button className="navItem disabled" type="button" disabled>
             <span className="navMain">
@@ -260,6 +267,7 @@ export function PcAdminApp() {
               集金管理
             </span>
           </button>
+
         </aside>
 
         <div className="content">
@@ -411,6 +419,19 @@ export function PcAdminApp() {
             />
             <button onClick={() => void createRole()}>追加</button>
           </div>
+            </section>
+          )}
+
+          {tab === "notifications" && (
+            <section className="panel">
+              <h2>通知センター（準備中）</h2>
+              <p className="muted">
+                モックアップのヘッダー通知導線に合わせ、通知ベル押下時の遷移先として配置しています。
+              </p>
+              <ul>
+                <li>勤怠修正 承認待ち: {pendingFixCount} 件</li>
+                <li>AI-OCR 承認待ち: {mockOcrPendingCount} 件</li>
+              </ul>
             </section>
           )}
         </div>

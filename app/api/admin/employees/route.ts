@@ -10,6 +10,7 @@ type EmployeePayload = {
   name?: string;
   joinedOn?: string | null;
   isActive?: boolean;
+  lineUserId?: string | null;
   roleIds?: string[];
 };
 
@@ -66,6 +67,7 @@ export async function POST(req: Request) {
         name,
         joined_on: body.joinedOn || null,
         is_active: body.isActive ?? true,
+        line_user_id: body.lineUserId?.trim() || null,
       })
       .select("id,tenant_id")
       .single();
@@ -113,6 +115,7 @@ export async function PATCH(req: Request) {
         name,
         joined_on: body.joinedOn || null,
         is_active: body.isActive ?? true,
+        line_user_id: body.lineUserId?.trim() || null,
       })
       .eq("tenant_id", current.tenant_id)
       .eq("id", id);

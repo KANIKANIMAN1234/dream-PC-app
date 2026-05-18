@@ -5,17 +5,15 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type PostPayload = {
-  flyerName?: string;
-  vendorName?: string;
-  faxNumber?: string;
-  dueDate?: string;
-  qty?: number;
+  employeeId?: string;
+  preferredDate?: string;
+  preferredType?: string;
+  reason?: string;
 };
 
 type PatchPayload = {
   id?: string;
-  status?: "draft" | "ordered" | "delivered";
-  action?: "fax_send";
+  action?: "approved" | "rejected";
 };
 
 async function getTenantId() {
@@ -37,40 +35,30 @@ export async function GET() {
       .from("m_user_defined_values")
       .select("value_code,value_name,description,created_at")
       .eq("tenant_id", tenantId)
-      .eq("group_code", "special_order")
+      .eq("group_code", "shift_request")
       .order("created_at", { ascending: false })
-      .limit(200);
+      .limit(300);
     if (error) return NextResponse.json({ ok: false, message: error.message }, { status: 500 });
 
     const rows = (data ?? []).map((row) => {
-      let payload: {
-        vendorName?: string;
-        faxNumber?: string;
-        dueDate?: string;
-        qty?: number;
-        status?: string;
-        faxStatus?: string;
-        faxSentAt?: string;
-        faxLogs?: Array<{ sentAt: string; result: string }>;
-      } = {};
+      let payload: Record<string, unknown> = {};
       try {
-        payload = row.description ? JSON.parse(row.description) : {};
+        payload = row.description ? (JSON.parse(row.description) as Record<string, unknown>) : {};
       } catch {
         payload = {};
       }
       return {
         id: row.value_code,
-        flyerName: row.value_name,
-        vendorName: payload.vendorName ?? "",
-        faxNumber: payload.faxNumber ?? "",
-        dueDate: payload.dueDate ?? "",
-        qty: Number(payload.qty ?? 0),
-        status: (payload.status ?? "draft") as "draft" | "ordered" | "delivered",
-        faxStatus: payload.faxStatus ?? "none",
-        faxSentAt: payload.faxSentAt ?? null,
-        faxLogs: payload.faxLogs ?? [],
+        employeeId: String(payload.employeeId ?? ""),
+        employeeName: row.value_name,
+        preferredDate: String(payload.preferredDate ?? ""),
+        preferredType: String(payload.preferredType ?? ""),
+        reason: String(payload.reason ?? ""),
+        status: String(payload.status ?? "pending"),
+        createdAt: String(payload.createdAt ?? row.created_at),
       };
     });
+
     return NextResponse.json({ ok: true, rows });
   } catch (error) {
     const message = error instanceof Error ? error.message : "不明なエラー";
@@ -81,23 +69,37 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as PostPayload;
-    const flyerName = body.flyerName?.trim();
-    const vendorName = body.vendorName?.trim();
-    const faxNumber = body.faxNumber?.trim() ?? "";
-    const dueDate = body.dueDate?.trim();
-    const qty = Number(body.qty ?? 0);
-    if (!flyerName || !vendorName || !dueDate || !(qty > 0)) {
-      return NextResponse.json({ ok: false, message: "flyerName/vendorName/dueDate/qty が必要です。" }, { status: 400 });
+    const employeeId = body.employeeId?.trim();
+    const preferredDate = body.preferredDate?.trim();
+    const preferredType = body.preferredType?.trim();
+    const reason = body.reason?.trim() ?? "";
+    if (!employeeId || !preferredDate || !preferredType) {
+      return NextResponse.json({ ok: false, message: "employeeId/preferredDate/preferredType が必要です。" }, { status: 400 });
     }
 
     const tenantId = await getTenantId();
-    const id = `so-${Date.now()}`;
-    const description = JSON.stringify({ vendorName, faxNumber, dueDate, qty, status: "draft", faxLogs: [] });
+    const { data: emp, error: empError } = await supabaseAdmin
+      .from("m_employees")
+      .select("id,name")
+      .eq("tenant_id", tenantId)
+      .eq("id", employeeId)
+      .single();
+    if (empError) return NextResponse.json({ ok: false, message: empError.message }, { status: 500 });
+
+    const id = `shift-${Date.now()}`;
+    const description = JSON.stringify({
+      employeeId,
+      preferredDate,
+      preferredType,
+      reason,
+      status: "pending",
+      createdAt: new Date().toISOString(),
+    });
     const { error } = await supabaseAdmin.from("m_user_defined_values").insert({
       tenant_id: tenantId,
-      group_code: "special_order",
+      group_code: "shift_request",
       value_code: id,
-      value_name: flyerName,
+      value_name: emp.name,
       description,
       display_order: 100,
       is_active: true,
@@ -113,45 +115,35 @@ export async function POST(req: Request) {
 export async function PATCH(req: Request) {
   try {
     const body = (await req.json()) as PatchPayload;
-    if (!body.id || (!body.status && body.action !== "fax_send")) {
-      return NextResponse.json({ ok: false, message: "id/status または action=fax_send が必要です。" }, { status: 400 });
+    if (!body.id || !body.action) {
+      return NextResponse.json({ ok: false, message: "id/action が必要です。" }, { status: 400 });
     }
     const tenantId = await getTenantId();
     const { data: row, error: rowError } = await supabaseAdmin
       .from("m_user_defined_values")
       .select("description")
       .eq("tenant_id", tenantId)
-      .eq("group_code", "special_order")
+      .eq("group_code", "shift_request")
       .eq("value_code", body.id)
       .single();
     if (rowError) return NextResponse.json({ ok: false, message: rowError.message }, { status: 500 });
 
     let payload: Record<string, unknown> = {};
     try {
-      payload = row.description ? JSON.parse(row.description) : {};
+      payload = row.description ? (JSON.parse(row.description) as Record<string, unknown>) : {};
     } catch {
       payload = {};
     }
-    if (body.action === "fax_send") {
-      payload.faxStatus = "sent";
-      const sentAt = new Date().toISOString();
-      payload.faxSentAt = sentAt;
-      const logs = Array.isArray(payload.faxLogs) ? payload.faxLogs : [];
-      logs.unshift({ sentAt, result: "success" });
-      payload.faxLogs = logs.slice(0, 20);
-      if (payload.status === "draft") payload.status = "ordered";
-    } else if (body.status) {
-      payload.status = body.status;
-    }
-
+    payload.status = body.action;
+    payload.reviewedAt = new Date().toISOString();
     const { error } = await supabaseAdmin
       .from("m_user_defined_values")
       .update({ description: JSON.stringify(payload) })
       .eq("tenant_id", tenantId)
-      .eq("group_code", "special_order")
+      .eq("group_code", "shift_request")
       .eq("value_code", body.id);
     if (error) return NextResponse.json({ ok: false, message: error.message }, { status: 500 });
-    return NextResponse.json({ ok: true, faxSentAt: payload.faxSentAt ?? null });
+    return NextResponse.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "不明なエラー";
     return NextResponse.json({ ok: false, message }, { status: 500 });

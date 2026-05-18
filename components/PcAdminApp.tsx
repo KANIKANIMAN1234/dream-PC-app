@@ -18,6 +18,8 @@ type Tab =
   | "collection"
   | "specialOrder";
 
+type RoleLevel = 1 | 2 | 3 | 4 | 5;
+
 type Customer = {
   id: string;
   customer_code: string;
@@ -63,6 +65,25 @@ type PaidLeaveRow = {
   used_days: number;
   remaining_days: number;
   mandatory_progress: number;
+};
+
+type ShiftRequestRow = {
+  id: string;
+  employeeId: string;
+  employeeName: string;
+  preferredDate: string;
+  preferredType: string;
+  reason: string;
+  status: string;
+  createdAt: string;
+};
+
+type HolidayRow = {
+  id: string;
+  holidayDate: string;
+  holidayName: string;
+  memo: string;
+  isActive: boolean;
 };
 
 type LeaveRequest = {
@@ -163,6 +184,13 @@ type CollectionRow = {
   customer_id: string;
   customer_code: string;
   customer_name: string;
+  due_amount: number;
+  received_amount: number;
+  change_amount: number;
+  method: string;
+  collected_by: string;
+  memo: string;
+  collected_at: string;
 };
 
 type ProductRow = {
@@ -215,13 +243,30 @@ type OrderRow = {
   customer_name: string;
 };
 
+type OrderChangeRow = {
+  id: string;
+  customer: string;
+  changeType: string;
+  targetFrom: string;
+  targetTo: string;
+  content: string;
+  memo: string;
+  mode: "single" | "bulk";
+  course: string;
+  createdAt: string;
+};
+
 type SpecialOrderRow = {
   id: string;
   flyerName: string;
   vendorName: string;
+  faxNumber?: string;
   dueDate: string;
   status: "draft" | "ordered" | "delivered";
   qty: number;
+  faxStatus?: string;
+  faxSentAt?: string | null;
+  faxLogs?: Array<{ sentAt: string; result: string }>;
 };
 
 function createEmptyCustomerForm(): CustomerForm {
@@ -268,9 +313,11 @@ function statusPillClass(status: string) {
 export function PcAdminApp() {
   const [tab, setTab] = useState<Tab>("customers");
   const [error, setError] = useState<string | null>(null);
+  const [currentRoleLevel, setCurrentRoleLevel] = useState<RoleLevel>(3);
 
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [orders, setOrders] = useState<OrderRow[]>([]);
+  const [orderChanges, setOrderChanges] = useState<OrderChangeRow[]>([]);
   const [products, setProducts] = useState<ProductRow[]>([]);
   const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
   const [deliveryRoutes, setDeliveryRoutes] = useState<DeliveryRoute[]>([]);
@@ -296,8 +343,13 @@ export function PcAdminApp() {
 
   const [showPendingFixOnly, setShowPendingFixOnly] = useState(true);
   const [showPendingLeaveOnly, setShowPendingLeaveOnly] = useState(true);
+  const [showPendingShiftOnly, setShowPendingShiftOnly] = useState(true);
   const [weeklyRows, setWeeklyRows] = useState<WeeklyAttendanceRow[]>([]);
   const [paidLeaveRows, setPaidLeaveRows] = useState<PaidLeaveRow[]>([]);
+  const [shiftRequests, setShiftRequests] = useState<ShiftRequestRow[]>([]);
+  const [holidayRows, setHolidayRows] = useState<HolidayRow[]>([]);
+  const [newHolidayDate, setNewHolidayDate] = useState("");
+  const [newHolidayName, setNewHolidayName] = useState("");
   const [paidLeaveYear, setPaidLeaveYear] = useState(new Date().getFullYear());
   const [weekStart, setWeekStart] = useState(() => {
     const now = new Date();
@@ -331,10 +383,23 @@ export function PcAdminApp() {
   });
   const [collectionMonth, setCollectionMonth] = useState(new Date().toISOString().slice(0, 7));
   const [collectionRows, setCollectionRows] = useState<CollectionRow[]>([]);
-  const [collectionSummary, setCollectionSummary] = useState({ total: 0, pending: 0, done: 0 });
+  const [collectionSummary, setCollectionSummary] = useState({ total: 0, pending: 0, done: 0, absent: 0 });
+  const [collectionEdits, setCollectionEdits] = useState<
+    Record<string, { status: string; receivedAmount: string; changeAmount: string; method: string; collectedBy: string; memo: string }>
+  >({});
   const [specialOrderRows, setSpecialOrderRows] = useState<SpecialOrderRow[]>([]);
+  const [orderChangeCustomer, setOrderChangeCustomer] = useState("");
+  const [orderChangeType, setOrderChangeType] = useState("休配");
+  const [orderChangeDateFrom, setOrderChangeDateFrom] = useState(new Date().toISOString().slice(0, 10));
+  const [orderChangeDateTo, setOrderChangeDateTo] = useState("");
+  const [orderChangeContent, setOrderChangeContent] = useState("");
+  const [orderChangeMemo, setOrderChangeMemo] = useState("");
+  const [bulkCourse, setBulkCourse] = useState("S01");
+  const [bulkChangeType, setBulkChangeType] = useState("臨時休配（全顧客）");
+  const [bulkChangeContent, setBulkChangeContent] = useState("");
   const [specialName, setSpecialName] = useState("");
   const [specialVendor, setSpecialVendor] = useState("");
+  const [specialFax, setSpecialFax] = useState("");
   const [specialDue, setSpecialDue] = useState("");
   const [specialQty, setSpecialQty] = useState("100");
   const [orderQtyByProduct, setOrderQtyByProduct] = useState<Record<string, string>>({});
@@ -348,6 +413,47 @@ export function PcAdminApp() {
   const mockOcrPendingCount = ocrItems.filter((row) => row.status === "pending").length;
   const headerNotifCount = pendingFixCount + pendingLeaveCount + mockOcrPendingCount;
   const pageSize = 15;
+  const tabRequiredRoleLevel: Record<Tab, RoleLevel> = {
+    customers: 2,
+    orders: 2,
+    procurement: 2,
+    inventory: 2,
+    delivery: 2,
+    attendanceFix: 3,
+    leave: 2,
+    roles: 4,
+    notifications: 3,
+    ocr: 2,
+    sales: 3,
+    collection: 2,
+    specialOrder: 2,
+  };
+
+  function canAccessTab(target: Tab) {
+    return currentRoleLevel >= tabRequiredRoleLevel[target];
+  }
+
+  const canViewCustomerContact = currentRoleLevel >= 3;
+  const canViewFaxNumber = currentRoleLevel >= 3;
+
+  function maskText(value: string, visible: boolean) {
+    if (visible) return value;
+    return "*****";
+  }
+
+  function guardedSetTab(target: Tab) {
+    if (!canAccessTab(target)) {
+      setError(`権限レベル${currentRoleLevel}では ${target} 画面を開けません。`);
+      return;
+    }
+    setError(null);
+    setTab(target);
+  }
+
+  function confirmAction(message: string) {
+    if (typeof window === "undefined") return true;
+    return window.confirm(message);
+  }
 
   function renderPageHeader(pageId: string, title: string, actions?: ReactNode) {
     return (
@@ -363,10 +469,18 @@ export function PcAdminApp() {
     void loadAll();
   }, []);
 
+  useEffect(() => {
+    if (!canAccessTab(tab)) {
+      const fallback = (Object.keys(tabRequiredRoleLevel) as Tab[]).find((key) => canAccessTab(key)) ?? "customers";
+      setTab(fallback);
+    }
+  }, [tab, currentRoleLevel]);
+
   async function loadAll() {
     await Promise.all([
       loadCustomers(),
       loadOrders(),
+      loadOrderChanges(),
       loadProducts(),
       loadDeliveries(deliveryDate),
       loadFixes(),
@@ -375,6 +489,8 @@ export function PcAdminApp() {
       loadEmployees(),
       loadWeeklyAttendance(weekStart),
       loadPaidLeaveSummary(paidLeaveYear),
+      loadShiftRequests(),
+      loadHolidayMaster(),
       loadSalesSummary(),
       loadCollectionSummary(collectionMonth),
       loadNoticeHistory(),
@@ -396,6 +512,13 @@ export function PcAdminApp() {
     const json = await res.json();
     if (!json.ok) return setError(json.message ?? "注文取得失敗");
     setOrders(json.rows ?? []);
+  }
+
+  async function loadOrderChanges() {
+    const res = await fetch("/api/admin/order-changes");
+    const json = await res.json();
+    if (!json.ok) return setError(json.message ?? "注文変更履歴取得失敗");
+    setOrderChanges(json.rows ?? []);
   }
 
   async function loadProducts() {
@@ -484,6 +607,20 @@ export function PcAdminApp() {
     setPaidLeaveRows(json.rows ?? []);
   }
 
+  async function loadShiftRequests() {
+    const res = await fetch("/api/admin/shift-requests");
+    const json = await res.json();
+    if (!json.ok) return setError(json.message ?? "シフト希望取得失敗");
+    setShiftRequests(json.rows ?? []);
+  }
+
+  async function loadHolidayMaster() {
+    const res = await fetch("/api/admin/holiday-master");
+    const json = await res.json();
+    if (!json.ok) return setError(json.message ?? "年間休日取得失敗");
+    setHolidayRows(json.rows ?? []);
+  }
+
   async function loadSalesSummary() {
     const res = await fetch("/api/admin/sales-summary");
     const json = await res.json();
@@ -496,11 +633,28 @@ export function PcAdminApp() {
     const res = await fetch(`/api/admin/collection-summary?billingMonth=${encodeURIComponent(targetMonth)}`);
     const json = await res.json();
     if (!json.ok) return setError(json.message ?? "集金サマリ取得失敗");
-    setCollectionRows(json.rows ?? []);
-    setCollectionSummary(json.summary ?? { total: 0, pending: 0, done: 0 });
+    const rows: CollectionRow[] = json.rows ?? [];
+    setCollectionRows(rows);
+    setCollectionSummary(json.summary ?? { total: 0, pending: 0, done: 0, absent: 0 });
+    const edits: Record<
+      string,
+      { status: string; receivedAmount: string; changeAmount: string; method: string; collectedBy: string; memo: string }
+    > = {};
+    rows.forEach((row) => {
+      edits[row.id] = {
+        status: row.status ?? "pending",
+        receivedAmount: String(row.received_amount ?? 0),
+        changeAmount: String(row.change_amount ?? 0),
+        method: row.method ?? "",
+        collectedBy: row.collected_by ?? "",
+        memo: row.memo ?? "",
+      };
+    });
+    setCollectionEdits(edits);
   }
 
   async function processFix(id: string, action: "approved" | "rejected") {
+    if (!confirmAction(`勤怠修正申請を${action === "approved" ? "承認" : "却下"}します。よろしいですか？`)) return;
     const res = await fetch("/api/admin/attendance-corrections", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -512,6 +666,7 @@ export function PcAdminApp() {
   }
 
   async function processLeave(id: string, action: "approved" | "rejected") {
+    if (!confirmAction(`休暇申請を${action === "approved" ? "承認" : "却下"}します。よろしいですか？`)) return;
     const res = await fetch("/api/admin/leave-requests", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -522,7 +677,43 @@ export function PcAdminApp() {
     await loadLeaves();
   }
 
+  async function processShiftRequest(id: string, action: "approved" | "rejected") {
+    if (!confirmAction(`シフト希望申請を${action === "approved" ? "承認" : "却下"}します。よろしいですか？`)) return;
+    const res = await fetch("/api/admin/shift-requests", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, action }),
+    });
+    const json = await res.json();
+    if (!json.ok) return setError(json.message ?? "シフト希望処理失敗");
+    await loadShiftRequests();
+  }
+
+  async function saveCollectionResult(targetId: string) {
+    if (!confirmAction("集金結果を保存します。よろしいですか？")) return;
+    const edit = collectionEdits[targetId];
+    if (!edit) return;
+    const res = await fetch("/api/admin/collection-summary", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        targetId,
+        status: edit.status,
+        receivedAmount: Number(edit.receivedAmount || "0"),
+        changeAmount: Number(edit.changeAmount || "0"),
+        method: edit.method,
+        collectedBy: edit.collectedBy,
+        memo: edit.memo,
+      }),
+    });
+    const json = await res.json();
+    if (!json.ok) return setError(json.message ?? "集金結果保存失敗");
+    await loadCollectionSummary(collectionMonth);
+    setError(null);
+  }
+
   async function updateOrderStatus(id: string, status: OrderRow["status"]) {
+    if (!confirmAction(`注文ステータスを「${status}」に変更します。よろしいですか？`)) return;
     const res = await fetch("/api/admin/orders", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -531,6 +722,46 @@ export function PcAdminApp() {
     const json = await res.json();
     if (!json.ok) return setError(json.message ?? "注文更新失敗");
     await loadOrders();
+  }
+
+  async function saveOrderChange(mode: "single" | "bulk") {
+    const content = mode === "single" ? orderChangeContent.trim() : bulkChangeContent.trim();
+    if (!content) {
+      setError("変更内容を入力してください。");
+      return;
+    }
+    if (mode === "single" && !orderChangeCustomer.trim()) {
+      setError("対象顧客を入力してください。");
+      return;
+    }
+    if (mode === "bulk" && !bulkCourse.trim()) {
+      setError("対象コースを選択してください。");
+      return;
+    }
+    const res = await fetch("/api/admin/order-changes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mode,
+        customer: mode === "single" ? orderChangeCustomer.trim() : undefined,
+        changeType: mode === "single" ? orderChangeType : bulkChangeType,
+        targetFrom: orderChangeDateFrom,
+        targetTo: orderChangeDateTo || orderChangeDateFrom,
+        content,
+        memo: orderChangeMemo.trim(),
+        course: mode === "bulk" ? bulkCourse : undefined,
+      }),
+    });
+    const json = await res.json();
+    if (!json.ok) {
+      setError(json.message ?? "注文変更保存失敗");
+      return;
+    }
+    await loadOrderChanges();
+    setOrderChangeContent("");
+    setBulkChangeContent("");
+    setOrderChangeMemo("");
+    setError(null);
   }
 
   async function updateDelivery(
@@ -729,6 +960,11 @@ export function PcAdminApp() {
     return leaves.filter((row) => row.status === "pending");
   }, [leaves, showPendingLeaveOnly]);
 
+  const visibleShiftRequests = useMemo(() => {
+    if (!showPendingShiftOnly) return shiftRequests;
+    return shiftRequests.filter((row) => row.status === "pending");
+  }, [shiftRequests, showPendingShiftOnly]);
+
   const weekDays = useMemo(() => {
     const base = new Date(`${weekStart}T00:00:00`);
     return Array.from({ length: 7 }).map((_, idx) => {
@@ -850,6 +1086,7 @@ export function PcAdminApp() {
       body: JSON.stringify({
         flyerName: specialName.trim(),
         vendorName: specialVendor.trim(),
+        faxNumber: specialFax.trim(),
         dueDate: specialDue,
         qty: Number.isFinite(qty) && qty > 0 ? Math.floor(qty) : 0,
       }),
@@ -862,6 +1099,7 @@ export function PcAdminApp() {
     await loadSpecialOrders();
     setSpecialName("");
     setSpecialVendor("");
+    setSpecialFax("");
     setSpecialDue("");
     setSpecialQty("100");
     setError(null);
@@ -878,6 +1116,7 @@ export function PcAdminApp() {
   }
 
   async function updateSpecialOrderStatus(id: string, status: SpecialOrderRow["status"]) {
+    if (!confirmAction(`定型外注文の状態を「${status}」へ変更します。よろしいですか？`)) return;
     const res = await fetch("/api/admin/special-orders", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -889,6 +1128,57 @@ export function PcAdminApp() {
       return;
     }
     await loadSpecialOrders();
+  }
+
+  async function addHoliday() {
+    if (!newHolidayDate || !newHolidayName.trim()) {
+      setError("休日日付と休日名を入力してください。");
+      return;
+    }
+    const res = await fetch("/api/admin/holiday-master", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ holidayDate: newHolidayDate, holidayName: newHolidayName.trim() }),
+    });
+    const json = await res.json();
+    if (!json.ok) {
+      setError(json.message ?? "休日追加失敗");
+      return;
+    }
+    setNewHolidayDate("");
+    setNewHolidayName("");
+    await loadHolidayMaster();
+    setError(null);
+  }
+
+  async function toggleHoliday(id: string, isActive: boolean) {
+    const res = await fetch("/api/admin/holiday-master", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, isActive }),
+    });
+    const json = await res.json();
+    if (!json.ok) {
+      setError(json.message ?? "休日更新失敗");
+      return;
+    }
+    await loadHolidayMaster();
+  }
+
+  async function sendSpecialOrderFax(id: string) {
+    if (!confirmAction("FAX送信を実行します。よろしいですか？")) return;
+    const res = await fetch("/api/admin/special-orders", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, action: "fax_send" }),
+    });
+    const json = await res.json();
+    if (!json.ok) {
+      setError(json.message ?? "FAX送信失敗");
+      return;
+    }
+    await loadSpecialOrders();
+    setError(null);
   }
 
   async function saveProcurementPlan() {
@@ -916,7 +1206,13 @@ export function PcAdminApp() {
     setError(null);
   }
 
+  async function confirmProcurementCsv() {
+    exportProcurementCsv();
+    await saveProcurementPlan();
+  }
+
   async function saveRouteAssignments() {
+    if (!confirmAction("コース担当割当を保存します。よろしいですか？")) return;
     const res = await fetch("/api/admin/route-assignments", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -985,6 +1281,17 @@ export function PcAdminApp() {
     });
   }, [employeeQuery, employeeStatusFilter, employees]);
 
+  const royalCustomers = useMemo(() => {
+    const amountByCustomer = new Map<string, { name: string; total: number }>();
+    orders.forEach((row) => {
+      const key = row.customer_id;
+      const current = amountByCustomer.get(key) ?? { name: row.customer_name, total: 0 };
+      current.total += Number(row.total_amount ?? 0);
+      amountByCustomer.set(key, current);
+    });
+    return [...amountByCustomer.values()].sort((a, b) => b.total - a.total).slice(0, 5);
+  }, [orders]);
+
   function exportCustomerCsv() {
     const header = ["顧客コード", "顧客名", "電話", "郵便番号", "住所", "LINE連携", "状態"];
     const lines = filteredCustomers.map((row) => [
@@ -1008,6 +1315,86 @@ export function PcAdminApp() {
     URL.revokeObjectURL(url);
   }
 
+  function exportProcurementCsv() {
+    const rows = products
+      .map((row) => ({
+        productCode: row.product_code,
+        productName: row.product_name,
+        qty: Number(orderQtyByProduct[row.id] ?? "0"),
+      }))
+      .filter((row) => Number.isFinite(row.qty) && row.qty > 0);
+    if (rows.length === 0) {
+      setError("CSV出力対象の発注数量がありません。");
+      return;
+    }
+    const header = ["商品コード", "商品名", "発注数量"];
+    const csvRows = [header, ...rows.map((row) => [row.productCode, row.productName, String(row.qty)])]
+      .map((cols) => cols.map((v) => `"${String(v).replaceAll('"', '""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob([`\uFEFF${csvRows}`], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `procurement_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportPaidLeaveCsv() {
+    if (paidLeaveRows.length === 0) {
+      setError("出力対象の有休データがありません。");
+      return;
+    }
+    const header = ["年度", "氏名", "付与日数", "取得済み", "残日数", "年5日義務進捗"];
+    const lines = paidLeaveRows.map((row) => [
+      `${paidLeaveYear}`,
+      row.employee_name,
+      `${row.granted_days}`,
+      `${row.used_days}`,
+      `${row.remaining_days}`,
+      `${row.mandatory_progress}/5`,
+    ]);
+    const csvRows = [header, ...lines]
+      .map((cols) => cols.map((v) => `"${String(v).replaceAll('"', '""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob([`\uFEFF${csvRows}`], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `paid_leave_${paidLeaveYear}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setError(null);
+  }
+
+  async function notifyMandatoryPending() {
+    const targets = paidLeaveRows.filter((row) => row.mandatory_progress < 5 && row.is_active);
+    if (targets.length === 0) {
+      setError("年5日未達成の対象者はいません。");
+      return;
+    }
+    const names = targets.slice(0, 8).map((row) => row.employee_name).join("、");
+    const remain = targets.length > 8 ? ` 他${targets.length - 8}名` : "";
+    const body = `【ドリー夢 狭山店】\n年5日有休義務の未達成者があります（${targets.length}名）。\n対象: ${names}${remain}\n管理Webで確認し、取得促進をお願いします。`;
+    const res = await fetch("/api/admin/notifications-history", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        destination: "従業員全員",
+        body,
+        sendAt: new Date().toISOString(),
+        mode: "immediate",
+      }),
+    });
+    const json = await res.json();
+    if (!json.ok) {
+      setError(json.message ?? "一括通知送信失敗");
+      return;
+    }
+    await loadNoticeHistory();
+    setError(null);
+  }
+
   return (
     <main className="container">
       <header className="topHeader">
@@ -1021,13 +1408,26 @@ export function PcAdminApp() {
           className="headerNotif"
           title="通知"
           onClick={() => {
-            setTab("notifications");
+            guardedSetTab("notifications");
           }}
         >
           🔔
           {headerNotifCount > 0 && <span className="headerNotifBadge">{headerNotifCount}</span>}
         </button>
-        <div className="headerUser">田中 管理者</div>
+        <label className="headerUser">
+          権限Lv
+          <select
+            value={currentRoleLevel}
+            onChange={(e) => setCurrentRoleLevel(Number(e.target.value) as RoleLevel)}
+            style={{ marginLeft: 6 }}
+          >
+            <option value={1}>1</option>
+            <option value={2}>2</option>
+            <option value={3}>3</option>
+            <option value={4}>4</option>
+            <option value={5}>5</option>
+          </select>
+        </label>
         <button type="button" className="logoutBtn" onClick={handleLogout}>
           ログアウト
         </button>
@@ -1038,14 +1438,14 @@ export function PcAdminApp() {
           <div className="navSection">顧客・注文</div>
           <button
             className={`navItem${tab === "customers" ? " active" : ""}`}
-            onClick={() => setTab("customers")}
+            onClick={() => guardedSetTab("customers")}
           >
             <span className="navMain">
               <span className="navIcon">👥</span>
               顧客管理
             </span>
           </button>
-          <button className={`navItem${tab === "orders" ? " active" : ""}`} onClick={() => setTab("orders")}>
+          <button className={`navItem${tab === "orders" ? " active" : ""}`} onClick={() => guardedSetTab("orders")}>
             <span className="navMain">
               <span className="navIcon">📋</span>
               注文管理
@@ -1053,20 +1453,20 @@ export function PcAdminApp() {
           </button>
 
           <div className="navSection">商品・物流</div>
-          <button className={`navItem${tab === "procurement" ? " active" : ""}`} onClick={() => setTab("procurement")}>
+          <button className={`navItem${tab === "procurement" ? " active" : ""}`} onClick={() => guardedSetTab("procurement")}>
             <span className="navMain">
               <span className="navIcon">📦</span>
               発注管理
             </span>
             <span className="navBadge">!</span>
           </button>
-          <button className={`navItem${tab === "inventory" ? " active" : ""}`} onClick={() => setTab("inventory")}>
+          <button className={`navItem${tab === "inventory" ? " active" : ""}`} onClick={() => guardedSetTab("inventory")}>
             <span className="navMain">
               <span className="navIcon">🏪</span>
               在庫管理
             </span>
           </button>
-          <button className={`navItem${tab === "delivery" ? " active" : ""}`} onClick={() => setTab("delivery")}>
+          <button className={`navItem${tab === "delivery" ? " active" : ""}`} onClick={() => guardedSetTab("delivery")}>
             <span className="navMain">
               <span className="navIcon">🚚</span>
               配達管理
@@ -1076,7 +1476,7 @@ export function PcAdminApp() {
           <div className="navSection">管理・分析</div>
           <button
             className={`navItem${tab === "attendanceFix" ? " active" : ""}`}
-            onClick={() => setTab("attendanceFix")}
+            onClick={() => guardedSetTab("attendanceFix")}
           >
             <span className="navMain">
               <span className="navIcon">⏰</span>
@@ -1084,13 +1484,13 @@ export function PcAdminApp() {
             </span>
             {pendingFixCount > 0 && <span className="navBadge">{pendingFixCount}</span>}
           </button>
-          <button className={`navItem${tab === "sales" ? " active" : ""}`} onClick={() => setTab("sales")}>
+          <button className={`navItem${tab === "sales" ? " active" : ""}`} onClick={() => guardedSetTab("sales")}>
             <span className="navMain">
               <span className="navIcon">📊</span>
               売上分析
             </span>
           </button>
-          <button className={`navItem${tab === "ocr" ? " active" : ""}`} onClick={() => setTab("ocr")}>
+          <button className={`navItem${tab === "ocr" ? " active" : ""}`} onClick={() => guardedSetTab("ocr")}>
             <span className="navMain">
               <span className="navIcon">🤖</span>
               AI-OCR承認
@@ -1101,7 +1501,7 @@ export function PcAdminApp() {
           <div className="navSection">従業員・集金</div>
           <button
             className={`navItem${tab === "leave" ? " active" : ""}`}
-            onClick={() => setTab("leave")}
+            onClick={() => guardedSetTab("leave")}
           >
             <span className="navMain">
               <span className="navIcon">🏖️</span>
@@ -1110,7 +1510,7 @@ export function PcAdminApp() {
           </button>
           <button
             className={`navItem${tab === "roles" ? " active" : ""}`}
-            onClick={() => setTab("roles")}
+            onClick={() => guardedSetTab("roles")}
           >
             <span className="navMain">
               <span className="navIcon">👤</span>
@@ -1119,7 +1519,7 @@ export function PcAdminApp() {
           </button>
           <button
             className={`navItem${tab === "notifications" ? " active" : ""}`}
-            onClick={() => setTab("notifications")}
+            onClick={() => guardedSetTab("notifications")}
           >
             <span className="navMain">
               <span className="navIcon">📢</span>
@@ -1127,13 +1527,13 @@ export function PcAdminApp() {
             </span>
             {headerNotifCount > 0 && <span className="navBadge">{headerNotifCount}</span>}
           </button>
-          <button className={`navItem${tab === "specialOrder" ? " active" : ""}`} onClick={() => setTab("specialOrder")}>
+          <button className={`navItem${tab === "specialOrder" ? " active" : ""}`} onClick={() => guardedSetTab("specialOrder")}>
             <span className="navMain">
               <span className="navIcon">📄</span>
               定型外注文
             </span>
           </button>
-          <button className={`navItem${tab === "collection" ? " active" : ""}`} onClick={() => setTab("collection")}>
+          <button className={`navItem${tab === "collection" ? " active" : ""}`} onClick={() => guardedSetTab("collection")}>
             <span className="navMain">
               <span className="navIcon">💰</span>
               集金管理
@@ -1200,8 +1600,8 @@ export function PcAdminApp() {
                       <tr>
                         <th>顧客コード</th>
                         <th>顧客名</th>
-                        <th>電話</th>
-                        <th>住所</th>
+                        <th>電話{canViewCustomerContact ? "" : "（マスク）"}</th>
+                        <th>住所{canViewCustomerContact ? "" : "（マスク）"}</th>
                         <th>LINE連携</th>
                         <th>状態</th>
                         <th>操作</th>
@@ -1212,8 +1612,8 @@ export function PcAdminApp() {
                         <tr key={row.id}>
                           <td>{row.customer_code}</td>
                           <td>{row.name}</td>
-                          <td>{row.phone}</td>
-                          <td>{row.address ?? "-"}</td>
+                          <td>{maskText(row.phone || "-", canViewCustomerContact)}</td>
+                          <td>{maskText(row.address ?? "-", canViewCustomerContact)}</td>
                           <td>{row.line_user_id ? "連携済" : "未連携"}</td>
                           <td>
                             <span className={statusPillClass(row.status)}>{customerStatusLabel(row.status)}</span>
@@ -1265,9 +1665,9 @@ export function PcAdminApp() {
                     顧客詳細: {selectedCustomer.name}（{selectedCustomer.customer_code}）
                   </h3>
                   <div className="detailGrid">
-                    <div>電話: {selectedCustomer.phone}</div>
+                    <div>電話: {maskText(selectedCustomer.phone || "-", canViewCustomerContact)}</div>
                     <div>郵便番号: {selectedCustomer.postal_code ?? "-"}</div>
-                    <div>住所: {selectedCustomer.address ?? "-"}</div>
+                    <div>住所: {maskText(selectedCustomer.address ?? "-", canViewCustomerContact)}</div>
                     <div>LINE: {selectedCustomer.line_user_id ?? "未連携"}</div>
                     <div>状態: {customerStatusLabel(selectedCustomer.status)}</div>
                   </div>
@@ -1354,6 +1754,119 @@ export function PcAdminApp() {
           {tab === "orders" && (
             <section className="panel">
               {renderPageHeader("M-02", "注文管理")}
+              <div className="splitGrid">
+                <div className="formCard">
+                  <h3>注文変更入力（M-02-CHG）</h3>
+                  <div className="formGrid2">
+                    <label>
+                      対象顧客
+                      <input
+                        value={orderChangeCustomer}
+                        onChange={(e) => setOrderChangeCustomer(e.target.value)}
+                        placeholder="コードまたは氏名"
+                      />
+                    </label>
+                    <label>
+                      変更区分
+                      <select value={orderChangeType} onChange={(e) => setOrderChangeType(e.target.value)}>
+                        <option value="休配">休配</option>
+                        <option value="商品変更">商品変更</option>
+                        <option value="数量変更">数量変更</option>
+                        <option value="中止">中止</option>
+                        <option value="再開">再開</option>
+                      </select>
+                    </label>
+                    <label>
+                      対象日（開始）
+                      <input type="date" value={orderChangeDateFrom} onChange={(e) => setOrderChangeDateFrom(e.target.value)} />
+                    </label>
+                    <label>
+                      対象日（終了）
+                      <input type="date" value={orderChangeDateTo} onChange={(e) => setOrderChangeDateTo(e.target.value)} />
+                    </label>
+                    <label className="fullWidth">
+                      変更内容
+                      <input
+                        value={orderChangeContent}
+                        onChange={(e) => setOrderChangeContent(e.target.value)}
+                        placeholder="例: 宅配の牛乳×2を×1へ変更"
+                      />
+                    </label>
+                    <label className="fullWidth">
+                      メモ
+                      <textarea rows={2} value={orderChangeMemo} onChange={(e) => setOrderChangeMemo(e.target.value)} />
+                    </label>
+                  </div>
+                  <div className="headerActions">
+                    <button type="button" className="primary" onClick={() => void saveOrderChange("single")}>
+                      変更を登録
+                    </button>
+                  </div>
+                </div>
+                <div className="formCard">
+                  <h3>一括変更（M-02-BULK）</h3>
+                  <div className="formGrid2">
+                    <label>
+                      対象コース
+                      <input value={bulkCourse} onChange={(e) => setBulkCourse(e.target.value)} placeholder="S01" />
+                    </label>
+                    <label>
+                      変更区分
+                      <select value={bulkChangeType} onChange={(e) => setBulkChangeType(e.target.value)}>
+                        <option value="臨時休配（全顧客）">臨時休配（全顧客）</option>
+                        <option value="配達曜日変更">配達曜日変更</option>
+                        <option value="定型商品一括切替">定型商品一括切替</option>
+                      </select>
+                    </label>
+                    <label className="fullWidth">
+                      変更内容
+                      <input
+                        value={bulkChangeContent}
+                        onChange={(e) => setBulkChangeContent(e.target.value)}
+                        placeholder="例: 4/25はコース全件休配"
+                      />
+                    </label>
+                  </div>
+                  <div className="headerActions">
+                    <button type="button" onClick={() => void saveOrderChange("bulk")}>
+                      一括変更を登録
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <hr className="sectionDivider" />
+              <h3>変更履歴（M-02-L）</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th>登録日時</th>
+                    <th>対象</th>
+                    <th>変更区分</th>
+                    <th>対象日</th>
+                    <th>内容</th>
+                    <th>メモ</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orderChanges.map((row) => (
+                    <tr key={row.id}>
+                      <td>{new Date(row.createdAt).toLocaleString("ja-JP")}</td>
+                      <td>{row.customer}</td>
+                      <td>{row.changeType}</td>
+                      <td>
+                        {row.targetFrom}
+                        {row.targetTo && row.targetTo !== row.targetFrom ? ` 〜 ${row.targetTo}` : ""}
+                      </td>
+                      <td>{row.content}</td>
+                      <td>{row.memo || "-"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <hr className="sectionDivider" />
+              <h3>請求/入金状態</h3>
               <table>
                 <thead>
                   <tr>
@@ -1394,6 +1907,33 @@ export function PcAdminApp() {
                   ))}
                 </tbody>
               </table>
+              <hr className="sectionDivider" />
+              <h3>ロイヤル顧客 TOP5</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th>順位</th>
+                    <th>顧客名</th>
+                    <th>累計請求額</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {royalCustomers.map((row, idx) => (
+                    <tr key={`${row.name}-${idx}`}>
+                      <td>{idx + 1}</td>
+                      <td>{row.name}</td>
+                      <td>¥{row.total.toLocaleString("ja-JP")}</td>
+                    </tr>
+                  ))}
+                  {royalCustomers.length === 0 && (
+                    <tr>
+                      <td colSpan={3} className="muted">
+                        対象データがありません。
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </section>
           )}
 
@@ -1402,9 +1942,14 @@ export function PcAdminApp() {
               {renderPageHeader(
                 "M-03",
                 "発注管理",
-                <button type="button" className="primary" onClick={() => void saveProcurementPlan()}>
-                  発注計画を保存
-                </button>
+                <>
+                  <button type="button" onClick={exportProcurementCsv}>
+                    明治Web用CSV出力
+                  </button>
+                  <button type="button" className="primary" onClick={() => void confirmProcurementCsv()}>
+                    確定・CSV出力
+                  </button>
+                </>
               )}
               <table>
                 <thead>
@@ -1791,10 +2336,18 @@ export function PcAdminApp() {
               {renderPageHeader(
                 "M-06-PAID-L",
                 "有休管理",
-                <select value={paidLeaveYear} onChange={(e) => setPaidLeaveYear(Number(e.target.value))}>
-                  <option value={new Date().getFullYear()}>{new Date().getFullYear()}年度</option>
-                  <option value={new Date().getFullYear() - 1}>{new Date().getFullYear() - 1}年度</option>
-                </select>
+                <>
+                  <select value={paidLeaveYear} onChange={(e) => setPaidLeaveYear(Number(e.target.value))}>
+                    <option value={new Date().getFullYear()}>{new Date().getFullYear()}年度</option>
+                    <option value={new Date().getFullYear() - 1}>{new Date().getFullYear() - 1}年度</option>
+                  </select>
+                  <button type="button" onClick={exportPaidLeaveCsv}>
+                    CSV出力
+                  </button>
+                  <button type="button" className="primary" onClick={() => void notifyMandatoryPending()}>
+                    未達成者へ一括通知
+                  </button>
+                </>
               )}
               <table>
                 <thead>
@@ -1824,6 +2377,114 @@ export function PcAdminApp() {
                       </td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+
+              <hr className="sectionDivider" />
+              {renderPageHeader(
+                "M-06-SHIFT",
+                "シフト希望申請（承認/却下）",
+                <label className="checkLabel">
+                  <input
+                    type="checkbox"
+                    checked={showPendingShiftOnly}
+                    onChange={(e) => setShowPendingShiftOnly(e.target.checked)}
+                  />
+                  承認待ちのみ表示
+                </label>
+              )}
+              <table>
+                <thead>
+                  <tr>
+                    <th>申請日時</th>
+                    <th>氏名</th>
+                    <th>希望日</th>
+                    <th>希望区分</th>
+                    <th>理由</th>
+                    <th>状態</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleShiftRequests.map((row) => (
+                    <tr key={row.id}>
+                      <td>{new Date(row.createdAt).toLocaleString("ja-JP")}</td>
+                      <td>{row.employeeName}</td>
+                      <td>{row.preferredDate}</td>
+                      <td>{row.preferredType}</td>
+                      <td>{row.reason || "-"}</td>
+                      <td>
+                        <span className={statusPillClass(row.status)}>{row.status}</span>
+                      </td>
+                      <td className="actions">
+                        <button className="approve" onClick={() => void processShiftRequest(row.id, "approved")}>
+                          承認
+                        </button>
+                        <button className="reject" onClick={() => void processShiftRequest(row.id, "rejected")}>
+                          却下
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {visibleShiftRequests.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="muted">
+                        対象のシフト希望申請はありません。
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+
+              <hr className="sectionDivider" />
+              {renderPageHeader(
+                "M-06-HOLIDAY",
+                "年間休日マスター管理",
+                <>
+                  <input type="date" value={newHolidayDate} onChange={(e) => setNewHolidayDate(e.target.value)} />
+                  <input
+                    value={newHolidayName}
+                    onChange={(e) => setNewHolidayName(e.target.value)}
+                    placeholder="休日名（例: 建国記念の日）"
+                  />
+                  <button type="button" className="primary" onClick={() => void addHoliday()}>
+                    休日を追加
+                  </button>
+                </>
+              )}
+              <table>
+                <thead>
+                  <tr>
+                    <th>日付</th>
+                    <th>休日名</th>
+                    <th>状態</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {holidayRows.map((row) => (
+                    <tr key={row.id}>
+                      <td>{row.holidayDate}</td>
+                      <td>{row.holidayName}</td>
+                      <td>
+                        <span className={statusPillClass(row.isActive ? "active" : "canceled")}>
+                          {row.isActive ? "有効" : "無効"}
+                        </span>
+                      </td>
+                      <td className="actions">
+                        <button type="button" onClick={() => void toggleHoliday(row.id, !row.isActive)}>
+                          {row.isActive ? "無効化" : "有効化"}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {holidayRows.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="muted">
+                        年間休日は未登録です。
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </section>
@@ -1900,14 +2561,25 @@ export function PcAdminApp() {
                   <div className="salesLabel">回収済み</div>
                   <div className="salesValue">{collectionSummary.done}件</div>
                 </div>
+                <div className="salesCard">
+                  <div className="salesLabel">不在</div>
+                  <div className="salesValue">{collectionSummary.absent}件</div>
+                </div>
               </div>
+              <h3>集金対象顧客（M-14-L）</h3>
               <table>
                 <thead>
                   <tr>
                     <th>請求月</th>
                     <th>顧客コード</th>
                     <th>顧客名</th>
+                    <th>請求額</th>
+                    <th>受取額</th>
+                    <th>おつり</th>
+                    <th>方法</th>
+                    <th>担当</th>
                     <th>状態</th>
+                    <th>操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1916,11 +2588,127 @@ export function PcAdminApp() {
                       <td>{row.billing_month}</td>
                       <td>{row.customer_code}</td>
                       <td>{row.customer_name}</td>
+                      <td>¥{Number(row.due_amount ?? 0).toLocaleString("ja-JP")}</td>
                       <td>
-                        <span className={statusPillClass(row.status)}>{row.status}</span>
+                        <input
+                          value={collectionEdits[row.id]?.receivedAmount ?? ""}
+                          onChange={(e) =>
+                            setCollectionEdits((prev) => ({
+                              ...prev,
+                              [row.id]: {
+                                ...prev[row.id],
+                                receivedAmount: e.target.value.replace(/[^\d]/g, ""),
+                              },
+                            }))
+                          }
+                          placeholder="0"
+                        />
+                      </td>
+                      <td>
+                        <input
+                          value={collectionEdits[row.id]?.changeAmount ?? ""}
+                          onChange={(e) =>
+                            setCollectionEdits((prev) => ({
+                              ...prev,
+                              [row.id]: {
+                                ...prev[row.id],
+                                changeAmount: e.target.value.replace(/[^\d]/g, ""),
+                              },
+                            }))
+                          }
+                          placeholder="0"
+                        />
+                      </td>
+                      <td>
+                        <select
+                          value={collectionEdits[row.id]?.method ?? ""}
+                          onChange={(e) =>
+                            setCollectionEdits((prev) => ({
+                              ...prev,
+                              [row.id]: {
+                                ...prev[row.id],
+                                method: e.target.value,
+                              },
+                            }))
+                          }
+                        >
+                          <option value="">未選択</option>
+                          <option value="cash">現金</option>
+                          <option value="bank">口座振替</option>
+                          <option value="card">クレジット</option>
+                        </select>
+                      </td>
+                      <td>
+                        <input
+                          value={collectionEdits[row.id]?.collectedBy ?? ""}
+                          onChange={(e) =>
+                            setCollectionEdits((prev) => ({
+                              ...prev,
+                              [row.id]: {
+                                ...prev[row.id],
+                                collectedBy: e.target.value,
+                              },
+                            }))
+                          }
+                          placeholder="担当者"
+                        />
+                      </td>
+                      <td>
+                        <select
+                          value={collectionEdits[row.id]?.status ?? row.status}
+                          onChange={(e) =>
+                            setCollectionEdits((prev) => ({
+                              ...prev,
+                              [row.id]: {
+                                ...prev[row.id],
+                                status: e.target.value,
+                              },
+                            }))
+                          }
+                        >
+                          <option value="pending">未回収</option>
+                          <option value="done">集金済</option>
+                          <option value="absent">不在</option>
+                        </select>
+                      </td>
+                      <td className="actions">
+                        <button type="button" className="primary" onClick={() => void saveCollectionResult(row.id)}>
+                          保存
+                        </button>
                       </td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+
+              <hr className="sectionDivider" />
+              <h3>集金結果一覧（M-14-RESULT）</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th>顧客</th>
+                    <th>受取額</th>
+                    <th>おつり</th>
+                    <th>方法</th>
+                    <th>担当</th>
+                    <th>更新日時</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {collectionRows
+                    .filter((row) => row.status === "done" || row.status === "absent")
+                    .map((row) => (
+                      <tr key={`result-${row.id}`}>
+                        <td>
+                          {row.customer_code} {row.customer_name}
+                        </td>
+                        <td>¥{Number(row.received_amount ?? 0).toLocaleString("ja-JP")}</td>
+                        <td>¥{Number(row.change_amount ?? 0).toLocaleString("ja-JP")}</td>
+                        <td>{row.method || "-"}</td>
+                        <td>{row.collected_by || "-"}</td>
+                        <td>{row.collected_at ? new Date(row.collected_at).toLocaleString("ja-JP") : "-"}</td>
+                      </tr>
+                    ))}
                 </tbody>
               </table>
             </section>
@@ -1940,6 +2728,10 @@ export function PcAdminApp() {
                     <label>
                       仕入先
                       <input value={specialVendor} onChange={(e) => setSpecialVendor(e.target.value)} />
+                    </label>
+                    <label>
+                      FAX番号
+                      <input value={specialFax} onChange={(e) => setSpecialFax(e.target.value)} placeholder="03-1234-5678" />
                     </label>
                     <label>
                       納期
@@ -1978,9 +2770,11 @@ export function PcAdminApp() {
                   <tr>
                     <th>チラシ名</th>
                     <th>仕入先</th>
+                    <th>FAX番号{canViewFaxNumber ? "" : "（マスク）"}</th>
                     <th>納期</th>
                     <th>部数</th>
                     <th>状態</th>
+                    <th>FAX</th>
                     <th>操作</th>
                   </tr>
                 </thead>
@@ -1989,11 +2783,13 @@ export function PcAdminApp() {
                     <tr key={row.id}>
                       <td>{row.flyerName}</td>
                       <td>{row.vendorName}</td>
+                      <td>{maskText(row.faxNumber || "-", canViewFaxNumber)}</td>
                       <td>{row.dueDate}</td>
                       <td>{row.qty}</td>
                       <td>
                         <span className={statusPillClass(row.status)}>{row.status}</span>
                       </td>
+                      <td>{row.faxSentAt ? `送信済 (${new Date(row.faxSentAt).toLocaleDateString("ja-JP")})` : "未送信"}</td>
                       <td className="actions">
                         <button type="button" className="secondary" onClick={() => void updateSpecialOrderStatus(row.id, "draft")}>
                           下書き
@@ -2004,9 +2800,39 @@ export function PcAdminApp() {
                         <button type="button" className="approve" onClick={() => void updateSpecialOrderStatus(row.id, "delivered")}>
                           納品済
                         </button>
+                        <button type="button" onClick={() => void sendSpecialOrderFax(row.id)}>
+                          FAX送信
+                        </button>
                       </td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+
+              <hr className="sectionDivider" />
+              <h3>FAX送信ログ（M-13-FAX）</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th>チラシ名</th>
+                    <th>仕入先</th>
+                    <th>FAX番号{canViewFaxNumber ? "" : "（マスク）"}</th>
+                    <th>送信日時</th>
+                    <th>結果</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {specialOrderRows.flatMap((row) =>
+                    (row.faxLogs ?? []).map((log, idx) => (
+                      <tr key={`${row.id}-fax-${idx}`}>
+                        <td>{row.flyerName}</td>
+                        <td>{row.vendorName}</td>
+                        <td>{maskText(row.faxNumber || "-", canViewFaxNumber)}</td>
+                        <td>{new Date(log.sentAt).toLocaleString("ja-JP")}</td>
+                        <td>{log.result}</td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </section>

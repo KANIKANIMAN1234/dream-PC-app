@@ -341,6 +341,7 @@ export function PcAdminApp() {
   const [procurementRecords, setProcurementRecords] = useState<ProcurementRecord[]>([]);
   const [deliveryDate, setDeliveryDate] = useState(new Date().toISOString().slice(0, 10));
   const [routeAssignments, setRouteAssignments] = useState<Record<string, string>>({});
+  const [bulkAssigneeId, setBulkAssigneeId] = useState("");
 
   const pendingFixCount = fixes.filter((row) => row.status === "pending").length;
   const pendingLeaveCount = leaves.filter((row) => row.status === "pending").length;
@@ -929,6 +930,21 @@ export function PcAdminApp() {
     setError(null);
   }
 
+  function applyAssigneeToUnassignedRoutes() {
+    if (!bulkAssigneeId) {
+      setError("一括適用する担当者を選択してください。");
+      return;
+    }
+    setRouteAssignments((prev) => {
+      const next = { ...prev };
+      deliveryRoutes.forEach((route) => {
+        if (!next[route.id]) next[route.id] = bulkAssigneeId;
+      });
+      return next;
+    });
+    setError(null);
+  }
+
   const roleNameById = useMemo(() => {
     const map = new Map<string, string>();
     roles.forEach((row) => map.set(row.id, row.role_name));
@@ -1508,6 +1524,19 @@ export function PcAdminApp() {
               )}
               <div className="formCard" style={{ marginBottom: 12 }}>
                 <h3>コース担当者割当（週開始: {weekStart}）</h3>
+                <div className="headerActions" style={{ marginBottom: 12 }}>
+                  <select value={bulkAssigneeId} onChange={(e) => setBulkAssigneeId(e.target.value)}>
+                    <option value="">一括適用する担当者</option>
+                    {deliveryAssignees.map((emp) => (
+                      <option key={emp.id} value={emp.id}>
+                        {emp.name}（{emp.employee_code_4}）
+                      </option>
+                    ))}
+                  </select>
+                  <button type="button" onClick={applyAssigneeToUnassignedRoutes}>
+                    未割当に一括適用
+                  </button>
+                </div>
                 <table>
                   <thead>
                     <tr>

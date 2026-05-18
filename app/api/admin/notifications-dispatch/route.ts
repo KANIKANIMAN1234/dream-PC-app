@@ -108,75 +108,105 @@ async function pushLineMessages(recipients: string[], text: string) {
   return { attempted: recipients.length, success, skipped: 0, failed };
 }
 
-export async function POST(req: Request) {
-  try {
-    const expected = process.env.NOTIFICATION_DISPATCH_KEY;
-    if (expected) {
-      const actual = req.headers.get("x-dispatch-key");
-      if (!actual || actual !== expected) {
-        return NextResponse.json({ ok: false, message: "dispatch key が不正です。" }, { status: 401 });
-      }
-    }
+function authorizeDispatch(req: Request) {
+  const cronSecret = process.env.CRON_SECRET;
+  const dispatchKey = process.env.NOTIFICATION_DISPATCH_KEY;
 
-    const tenantId = await getTenantId();
-    const now = new Date();
-    const { data, error } = await supabaseAdmin
+  const authHeader = req.headers.get("authorization") ?? "";
+  const bearer = authHeader.startsWith("Bearer ") ? authHeader.slice("Bearer ".length).trim() : "";
+  const keyHeader = req.headers.get("x-dispatch-key") ?? "";
+  const keyQuery = new URL(req.url).searchParams.get("key") ?? "";
+
+  if (cronSecret && bearer === cronSecret) return true;
+  if (dispatchKey && (keyHeader === dispatchKey || keyQuery === dispatchKey)) return true;
+  if (!cronSecret && !dispatchKey) return true;
+  return false;
+}
+
+async function executeDispatch() {
+  const tenantId = await getTenantId();
+  const now = new Date();
+  const { data, error } = await supabaseAdmin
+    .from("m_user_defined_values")
+    .select("tenant_id,value_code,value_name,description")
+    .eq("tenant_id", tenantId)
+    .eq("group_code", "notice_history")
+    .order("created_at", { ascending: true })
+    .limit(200);
+  if (error) return { ok: false as const, status: 500, message: error.message };
+
+  const dueRows = (data ?? []).filter((row) => {
+    let extra: NoticeExtra = {};
+    try {
+      extra = row.description ? (JSON.parse(row.description) as NoticeExtra) : {};
+    } catch {
+      extra = {};
+    }
+    if (extra.mode !== "scheduled") return false;
+    if (!extra.sendAt) return false;
+    if (extra.deliveredAt) return false;
+    const ts = new Date(extra.sendAt);
+    if (Number.isNaN(ts.getTime())) return false;
+    return ts.getTime() <= now.getTime();
+  });
+
+  let processed = 0;
+  let updated = 0;
+  for (const row of dueRows) {
+    processed += 1;
+    let extra: NoticeExtra = {};
+    try {
+      extra = row.description ? (JSON.parse(row.description) as NoticeExtra) : {};
+    } catch {
+      extra = {};
+    }
+    const text = (extra.body ?? "").trim();
+    if (!text) continue;
+    const recipients = await resolveRecipientLineIds(tenantId, row.value_name);
+    const deliveryResult = await pushLineMessages(recipients, text);
+    const nextExtra: NoticeExtra = {
+      ...extra,
+      deliveryResult,
+      deliveredAt: new Date().toISOString(),
+    };
+    const { error: updateError } = await supabaseAdmin
       .from("m_user_defined_values")
-      .select("tenant_id,value_code,value_name,description")
+      .update({ description: JSON.stringify(nextExtra) })
       .eq("tenant_id", tenantId)
       .eq("group_code", "notice_history")
-      .order("created_at", { ascending: true })
-      .limit(200);
-    if (error) return NextResponse.json({ ok: false, message: error.message }, { status: 500 });
+      .eq("value_code", row.value_code);
+    if (!updateError) updated += 1;
+  }
 
-    const dueRows = (data ?? []).filter((row) => {
-      let extra: NoticeExtra = {};
-      try {
-        extra = row.description ? (JSON.parse(row.description) as NoticeExtra) : {};
-      } catch {
-        extra = {};
-      }
-      if (extra.mode !== "scheduled") return false;
-      if (!extra.sendAt) return false;
-      if (extra.deliveredAt) return false;
-      const ts = new Date(extra.sendAt);
-      if (Number.isNaN(ts.getTime())) return false;
-      return ts.getTime() <= now.getTime();
-    });
+  return { ok: true as const, status: 200, processed, updated };
+}
 
-    let processed = 0;
-    let updated = 0;
-    for (const row of dueRows) {
-      processed += 1;
-      let extra: NoticeExtra = {};
-      try {
-        extra = row.description ? (JSON.parse(row.description) as NoticeExtra) : {};
-      } catch {
-        extra = {};
-      }
-      const text = (extra.body ?? "").trim();
-      if (!text) continue;
-      const recipients = await resolveRecipientLineIds(tenantId, row.value_name);
-      const deliveryResult = await pushLineMessages(recipients, text);
-      const nextExtra: NoticeExtra = {
-        ...extra,
-        deliveryResult,
-        deliveredAt: new Date().toISOString(),
-      };
-      const { error: updateError } = await supabaseAdmin
-        .from("m_user_defined_values")
-        .update({ description: JSON.stringify(nextExtra) })
-        .eq("tenant_id", tenantId)
-        .eq("group_code", "notice_history")
-        .eq("value_code", row.value_code);
-      if (!updateError) updated += 1;
+export async function GET(req: Request) {
+  try {
+    if (!authorizeDispatch(req)) {
+      return NextResponse.json({ ok: false, message: "dispatch key が不正です。" }, { status: 401 });
     }
+    const result = await executeDispatch();
+    if (!result.ok) {
+      return NextResponse.json({ ok: false, message: result.message }, { status: result.status });
+    }
+    return NextResponse.json({ ok: true, processed: result.processed, updated: result.updated });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "不明なエラー";
+    return NextResponse.json({ ok: false, message }, { status: 500 });
+  }
+}
 
-    return NextResponse.json({
-      ok: true,
-      processed,
-      updated,
-    });
+export async function POST(req: Request) {
+  try {
+    if (!authorizeDispatch(req)) {
+      return NextResponse.json({ ok: false, message: "dispatch key が不正です。" }, { status: 401 });
+    }
+    const result = await executeDispatch();
+    if (!result.ok) {
+      return NextResponse.json({ ok: false, message: result.message }, { status: result.status });
+    }
+    return NextResponse.json({ ok: true, processed: result.processed, updated: result.updated });
   } catch (error) {
     const message = error instanceof Error ? error.message : "不明なエラー";
     return NextResponse.json({ ok: false, message }, { status: 500 });

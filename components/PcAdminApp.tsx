@@ -32,23 +32,6 @@ type Tab =
 
 type NavSectionKey = "customersOrders" | "productsLogistics" | "managementAnalysis" | "employeesCollection";
 
-const TAB_NAV_SECTION: Record<Tab, NavSectionKey> = {
-  customers: "customersOrders",
-  orders: "customersOrders",
-  procurement: "productsLogistics",
-  inventory: "productsLogistics",
-  delivery: "productsLogistics",
-  attendanceFix: "managementAnalysis",
-  payroll: "managementAnalysis",
-  ocr: "customersOrders",
-  collection: "customersOrders",
-  sales: "customersOrders",
-  specialOrder: "customersOrders",
-  leave: "employeesCollection",
-  roles: "employeesCollection",
-  notifications: "employeesCollection",
-};
-
 type RoleLevel = 1 | 2 | 3 | 4 | 5;
 
 type Customer = {
@@ -556,11 +539,6 @@ export function PcAdminApp() {
       </div>
     );
   }
-
-  useEffect(() => {
-    const section = TAB_NAV_SECTION[tab];
-    setNavSectionsOpen((prev) => (prev[section] ? prev : { ...prev, [section]: true }));
-  }, [tab]);
 
   function confirmAction(message: string) {
     if (typeof window === "undefined") return true;

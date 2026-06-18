@@ -364,10 +364,10 @@ const attendanceDemoScope = isDemoModeEnabled();
 export function PcAdminApp() {
   const [tab, setTab] = useState<Tab>(attendanceDemoScope ? "attendanceFix" : "customers");
   const [navSectionsOpen, setNavSectionsOpen] = useState<Record<NavSectionKey, boolean>>({
-    customersOrders: true,
-    productsLogistics: true,
-    managementAnalysis: true,
-    employeesCollection: true,
+    customersOrders: false,
+    productsLogistics: false,
+    managementAnalysis: false,
+    employeesCollection: false,
   });
   const [error, setError] = useState<string | null>(null);
   const [demoNotice, setDemoNotice] = useState<string | null>(

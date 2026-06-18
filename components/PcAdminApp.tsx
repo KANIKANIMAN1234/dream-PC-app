@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
-  demoEmployees,
   demoFixes,
   demoLeaves,
   demoPaidLeaveRows,
@@ -709,16 +708,8 @@ export function PcAdminApp() {
   async function loadEmployees() {
     const res = await fetch("/api/admin/employees");
     const json = await res.json();
-    if (!json.ok) {
-      if (attendanceDemoScope) {
-        setEmployees(demoEmployees());
-        setEmployeeAssignments([]);
-        return;
-      }
-      return setError(json.message ?? "従業員取得失敗");
-    }
-    const rows = json.rows ?? [];
-    setEmployees(rows.length === 0 && attendanceDemoScope ? demoEmployees() : rows);
+    if (!json.ok) return setError(json.message ?? "従業員取得失敗");
+    setEmployees(json.rows ?? []);
     setEmployeeAssignments(json.assignments ?? []);
   }
 
@@ -1010,12 +1001,18 @@ export function PcAdminApp() {
   }
 
   async function saveEmployee() {
-    if (!employeeForm.employeeCode4.trim() || !employeeForm.name.trim()) {
+    const code4 = employeeForm.employeeCode4.trim();
+    if (!code4 || !employeeForm.name.trim()) {
       setError("従業員コード4桁と氏名は必須です。");
+      return;
+    }
+    if (!/^[0-9]{4}$/.test(code4)) {
+      setError("従業員コードは4桁の数字で入力してください。");
       return;
     }
     setIsSavingEmployee(true);
     setError(null);
+    const savedName = employeeForm.name.trim();
     try {
       const method = employeeForm.id ? "PATCH" : "POST";
       const res = await fetch("/api/admin/employees", {
@@ -1028,10 +1025,11 @@ export function PcAdminApp() {
         setError(json.message ?? "従業員保存失敗");
         return;
       }
-      await appendAuditLog("従業員", employeeForm.id ? "従業員更新" : "従業員登録", employeeForm.employeeCode4, employeeForm.name);
+      await appendAuditLog("従業員", employeeForm.id ? "従業員更新" : "従業員登録", code4, employeeForm.name);
       await loadEmployees();
       setEmployeeForm(createEmptyEmployeeForm());
       setEmployeeView("list");
+      setDemoNotice(`従業員「${savedName}」（コード: ${code4}）を保存しました。勤怠端末でこのコードを使ってログインできます。`);
     } finally {
       setIsSavingEmployee(false);
     }
@@ -3361,6 +3359,14 @@ export function PcAdminApp() {
                 </>
               )}
 
+              <div className="infoBox">
+                <strong>勤怠端末との連携</strong>
+                <p>
+                  ここで登録した4桁の社員コードで、勤怠登録端末からログイン・打刻ができます。
+                  「在籍中」の従業員のみ端末で利用可能です。打刻データは勤怠管理（M-06）に反映されます。
+                </p>
+              </div>
+
               {employeeView === "list" && (
                 <>
                   <div className="filterRow">
@@ -3392,6 +3398,11 @@ export function PcAdminApp() {
                       </tr>
                     </thead>
                     <tbody>
+                      {filteredEmployees.length === 0 && (
+                        <tr>
+                          <td colSpan={7}>従業員が登録されていません。「+ 新規登録」から追加してください。</td>
+                        </tr>
+                      )}
                       {filteredEmployees.map((row) => {
                         const roleNames = employeeAssignments
                           .filter((item) => item.employee_id === row.id)
@@ -3425,6 +3436,7 @@ export function PcAdminApp() {
                       従業員コード4桁 *
                       <input
                         maxLength={4}
+                        inputMode="numeric"
                         value={employeeForm.employeeCode4}
                         onChange={(e) =>
                           setEmployeeForm((prev) => ({
@@ -3432,7 +3444,9 @@ export function PcAdminApp() {
                             employeeCode4: e.target.value.replace(/[^\d]/g, "").slice(0, 4),
                           }))
                         }
+                        placeholder="例: 2001"
                       />
+                      <span className="fieldHint">勤怠端末ログインに使用します（4桁数字・テナント内で一意）</span>
                     </label>
                     <label>
                       氏名 *

@@ -43,10 +43,10 @@ const TAB_NAV_SECTION: Record<Tab, NavSectionKey> = {
   ocr: "customersOrders",
   collection: "customersOrders",
   sales: "customersOrders",
+  specialOrder: "customersOrders",
   leave: "employeesCollection",
   roles: "employeesCollection",
   notifications: "employeesCollection",
-  specialOrder: "employeesCollection",
 };
 
 type RoleLevel = 1 | 2 | 3 | 4 | 5;
@@ -1763,6 +1763,14 @@ export function PcAdminApp() {
                     注文管理
                   </span>
                 </button>
+                {shouldShowNavItem("specialOrder") && (
+                  <button className={`navItem${tab === "specialOrder" ? " active" : ""}`} onClick={() => guardedSetTab("specialOrder")}>
+                    <span className="navMain">
+                      <span className="navIcon">📄</span>
+                      定型外注文
+                    </span>
+                  </button>
+                )}
                 {shouldShowNavItem("ocr") && (
                   <button className={`navItem${tab === "ocr" ? " active" : ""}`} onClick={() => guardedSetTab("ocr")}>
                     <span className="navMain">
@@ -1874,14 +1882,6 @@ export function PcAdminApp() {
                     通知配信
                   </span>
                   {headerNotifCount > 0 && <span className="navBadge">{headerNotifCount}</span>}
-                </button>
-              )}
-              {shouldShowNavItem("specialOrder") && (
-                <button className={`navItem${tab === "specialOrder" ? " active" : ""}`} onClick={() => guardedSetTab("specialOrder")}>
-                  <span className="navMain">
-                    <span className="navIcon">📄</span>
-                    定型外注文
-                  </span>
                 </button>
               )}
             </>,

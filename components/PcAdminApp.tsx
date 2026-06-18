@@ -29,6 +29,25 @@ type Tab =
   | "specialOrder"
   | "payroll";
 
+type NavSectionKey = "customersOrders" | "productsLogistics" | "managementAnalysis" | "employeesCollection";
+
+const TAB_NAV_SECTION: Record<Tab, NavSectionKey> = {
+  customers: "customersOrders",
+  orders: "customersOrders",
+  procurement: "productsLogistics",
+  inventory: "productsLogistics",
+  delivery: "productsLogistics",
+  attendanceFix: "managementAnalysis",
+  payroll: "managementAnalysis",
+  sales: "managementAnalysis",
+  ocr: "managementAnalysis",
+  leave: "employeesCollection",
+  roles: "employeesCollection",
+  notifications: "employeesCollection",
+  specialOrder: "employeesCollection",
+  collection: "employeesCollection",
+};
+
 type RoleLevel = 1 | 2 | 3 | 4 | 5;
 
 type Customer = {
@@ -345,6 +364,12 @@ const attendanceDemoScope = isDemoModeEnabled();
 
 export function PcAdminApp() {
   const [tab, setTab] = useState<Tab>(attendanceDemoScope ? "attendanceFix" : "customers");
+  const [navSectionsOpen, setNavSectionsOpen] = useState<Record<NavSectionKey, boolean>>({
+    customersOrders: true,
+    productsLogistics: true,
+    managementAnalysis: true,
+    employeesCollection: true,
+  });
   const [error, setError] = useState<string | null>(null);
   const [demoNotice, setDemoNotice] = useState<string | null>(
     attendanceDemoScope ? "デモモード: 勤怠・経理向け画面を表示中（NEXT_PUBLIC_DEMO_SCOPE=attendance）" : null,
@@ -501,6 +526,35 @@ export function PcAdminApp() {
     setError(null);
     setTab(target);
   }
+
+  function toggleNavSection(section: NavSectionKey) {
+    setNavSectionsOpen((prev) => ({ ...prev, [section]: !prev[section] }));
+  }
+
+  function renderNavSection(section: NavSectionKey, title: string, children: ReactNode) {
+    const isOpen = navSectionsOpen[section];
+    return (
+      <div className="navSectionGroup">
+        <button
+          type="button"
+          className={`navSectionToggle${isOpen ? " open" : ""}`}
+          onClick={() => toggleNavSection(section)}
+          aria-expanded={isOpen}
+        >
+          <span>{title}</span>
+          <span className="navSectionChevron" aria-hidden="true">
+            {isOpen ? "▾" : "▸"}
+          </span>
+        </button>
+        {isOpen && <div className="navSectionItems">{children}</div>}
+      </div>
+    );
+  }
+
+  useEffect(() => {
+    const section = TAB_NAV_SECTION[tab];
+    setNavSectionsOpen((prev) => (prev[section] ? prev : { ...prev, [section]: true }));
+  }, [tab]);
 
   function confirmAction(message: string) {
     if (typeof window === "undefined") return true;
@@ -1625,142 +1679,156 @@ export function PcAdminApp() {
 
       <div className="layout">
         <aside className="sidebar">
-          {shouldShowNavItem("customers") && (
+          {shouldShowNavItem("customers") &&
+            renderNavSection(
+              "customersOrders",
+              "顧客・注文",
+              <>
+                <button
+                  className={`navItem${tab === "customers" ? " active" : ""}`}
+                  onClick={() => guardedSetTab("customers")}
+                >
+                  <span className="navMain">
+                    <span className="navIcon">👥</span>
+                    顧客管理
+                  </span>
+                </button>
+                <button className={`navItem${tab === "orders" ? " active" : ""}`} onClick={() => guardedSetTab("orders")}>
+                  <span className="navMain">
+                    <span className="navIcon">📋</span>
+                    注文管理
+                  </span>
+                </button>
+              </>,
+            )}
+
+          {shouldShowNavItem("procurement") &&
+            renderNavSection(
+              "productsLogistics",
+              "商品・物流",
+              <>
+                <button className={`navItem${tab === "procurement" ? " active" : ""}`} onClick={() => guardedSetTab("procurement")}>
+                  <span className="navMain">
+                    <span className="navIcon">📦</span>
+                    発注管理
+                  </span>
+                  <span className="navBadge">!</span>
+                </button>
+                <button className={`navItem${tab === "inventory" ? " active" : ""}`} onClick={() => guardedSetTab("inventory")}>
+                  <span className="navMain">
+                    <span className="navIcon">🏪</span>
+                    在庫管理
+                  </span>
+                </button>
+                <button className={`navItem${tab === "delivery" ? " active" : ""}`} onClick={() => guardedSetTab("delivery")}>
+                  <span className="navMain">
+                    <span className="navIcon">🚚</span>
+                    配達管理
+                  </span>
+                </button>
+              </>,
+            )}
+
+          {renderNavSection(
+            "managementAnalysis",
+            "管理・分析",
             <>
-              <div className="navSection">顧客・注文</div>
-              <button
-                className={`navItem${tab === "customers" ? " active" : ""}`}
-                onClick={() => guardedSetTab("customers")}
-              >
-                <span className="navMain">
-                  <span className="navIcon">👥</span>
-                  顧客管理
-                </span>
-              </button>
-              <button className={`navItem${tab === "orders" ? " active" : ""}`} onClick={() => guardedSetTab("orders")}>
-                <span className="navMain">
-                  <span className="navIcon">📋</span>
-                  注文管理
-                </span>
-              </button>
-            </>
+              {shouldShowNavItem("attendanceFix") && (
+                <button
+                  className={`navItem${tab === "attendanceFix" ? " active" : ""}`}
+                  onClick={() => guardedSetTab("attendanceFix")}
+                >
+                  <span className="navMain">
+                    <span className="navIcon">⏰</span>
+                    勤怠管理
+                  </span>
+                  {pendingFixCount > 0 && <span className="navBadge">{pendingFixCount}</span>}
+                </button>
+              )}
+              {shouldShowNavItem("payroll") && (
+                <button className={`navItem${tab === "payroll" ? " active" : ""}`} onClick={() => guardedSetTab("payroll")}>
+                  <span className="navMain">
+                    <span className="navIcon">🧾</span>
+                    経理・給与連携
+                  </span>
+                </button>
+              )}
+              {shouldShowNavItem("sales") && (
+                <button className={`navItem${tab === "sales" ? " active" : ""}`} onClick={() => guardedSetTab("sales")}>
+                  <span className="navMain">
+                    <span className="navIcon">📊</span>
+                    売上分析
+                  </span>
+                </button>
+              )}
+              {shouldShowNavItem("ocr") && (
+                <button className={`navItem${tab === "ocr" ? " active" : ""}`} onClick={() => guardedSetTab("ocr")}>
+                  <span className="navMain">
+                    <span className="navIcon">🤖</span>
+                    AI-OCR承認
+                  </span>
+                  <span className="navBadge">{mockOcrPendingCount}</span>
+                </button>
+              )}
+            </>,
           )}
 
-          {shouldShowNavItem("procurement") && (
+          {renderNavSection(
+            "employeesCollection",
+            "従業員・集金",
             <>
-              <div className="navSection">商品・物流</div>
-              <button className={`navItem${tab === "procurement" ? " active" : ""}`} onClick={() => guardedSetTab("procurement")}>
-                <span className="navMain">
-                  <span className="navIcon">📦</span>
-                  発注管理
-                </span>
-                <span className="navBadge">!</span>
-              </button>
-              <button className={`navItem${tab === "inventory" ? " active" : ""}`} onClick={() => guardedSetTab("inventory")}>
-                <span className="navMain">
-                  <span className="navIcon">🏪</span>
-                  在庫管理
-                </span>
-              </button>
-              <button className={`navItem${tab === "delivery" ? " active" : ""}`} onClick={() => guardedSetTab("delivery")}>
-                <span className="navMain">
-                  <span className="navIcon">🚚</span>
-                  配達管理
-                </span>
-              </button>
-            </>
-          )}
-
-          <div className="navSection">管理・分析</div>
-          {shouldShowNavItem("attendanceFix") && (
-            <button
-              className={`navItem${tab === "attendanceFix" ? " active" : ""}`}
-              onClick={() => guardedSetTab("attendanceFix")}
-            >
-              <span className="navMain">
-                <span className="navIcon">⏰</span>
-                勤怠管理
-              </span>
-              {pendingFixCount > 0 && <span className="navBadge">{pendingFixCount}</span>}
-            </button>
-          )}
-          {shouldShowNavItem("payroll") && (
-            <button className={`navItem${tab === "payroll" ? " active" : ""}`} onClick={() => guardedSetTab("payroll")}>
-              <span className="navMain">
-                <span className="navIcon">🧾</span>
-                経理・給与連携
-              </span>
-            </button>
-          )}
-          {shouldShowNavItem("sales") && (
-            <button className={`navItem${tab === "sales" ? " active" : ""}`} onClick={() => guardedSetTab("sales")}>
-              <span className="navMain">
-                <span className="navIcon">📊</span>
-                売上分析
-              </span>
-            </button>
-          )}
-          {shouldShowNavItem("ocr") && (
-            <button className={`navItem${tab === "ocr" ? " active" : ""}`} onClick={() => guardedSetTab("ocr")}>
-              <span className="navMain">
-                <span className="navIcon">🤖</span>
-                AI-OCR承認
-              </span>
-              <span className="navBadge">{mockOcrPendingCount}</span>
-            </button>
-          )}
-
-          <div className="navSection">従業員・集金</div>
-          {shouldShowNavItem("leave") && (
-            <button
-              className={`navItem${tab === "leave" ? " active" : ""}`}
-              onClick={() => guardedSetTab("leave")}
-            >
-              <span className="navMain">
-                <span className="navIcon">🏖️</span>
-                休暇申請
-              </span>
-              {pendingLeaveCount > 0 && <span className="navBadge">{pendingLeaveCount}</span>}
-            </button>
-          )}
-          {shouldShowNavItem("roles") && (
-            <button
-              className={`navItem${tab === "roles" ? " active" : ""}`}
-              onClick={() => guardedSetTab("roles")}
-            >
-              <span className="navMain">
-                <span className="navIcon">👤</span>
-                従業員管理
-              </span>
-            </button>
-          )}
-          {shouldShowNavItem("notifications") && (
-            <button
-              className={`navItem${tab === "notifications" ? " active" : ""}`}
-              onClick={() => guardedSetTab("notifications")}
-            >
-              <span className="navMain">
-                <span className="navIcon">📢</span>
-                通知配信
-              </span>
-              {headerNotifCount > 0 && <span className="navBadge">{headerNotifCount}</span>}
-            </button>
-          )}
-          {shouldShowNavItem("specialOrder") && (
-            <button className={`navItem${tab === "specialOrder" ? " active" : ""}`} onClick={() => guardedSetTab("specialOrder")}>
-              <span className="navMain">
-                <span className="navIcon">📄</span>
-                定型外注文
-              </span>
-            </button>
-          )}
-          {shouldShowNavItem("collection") && (
-            <button className={`navItem${tab === "collection" ? " active" : ""}`} onClick={() => guardedSetTab("collection")}>
-              <span className="navMain">
-                <span className="navIcon">💰</span>
-                集金管理
-              </span>
-            </button>
+              {shouldShowNavItem("leave") && (
+                <button
+                  className={`navItem${tab === "leave" ? " active" : ""}`}
+                  onClick={() => guardedSetTab("leave")}
+                >
+                  <span className="navMain">
+                    <span className="navIcon">🏖️</span>
+                    休暇申請
+                  </span>
+                  {pendingLeaveCount > 0 && <span className="navBadge">{pendingLeaveCount}</span>}
+                </button>
+              )}
+              {shouldShowNavItem("roles") && (
+                <button
+                  className={`navItem${tab === "roles" ? " active" : ""}`}
+                  onClick={() => guardedSetTab("roles")}
+                >
+                  <span className="navMain">
+                    <span className="navIcon">👤</span>
+                    従業員管理
+                  </span>
+                </button>
+              )}
+              {shouldShowNavItem("notifications") && (
+                <button
+                  className={`navItem${tab === "notifications" ? " active" : ""}`}
+                  onClick={() => guardedSetTab("notifications")}
+                >
+                  <span className="navMain">
+                    <span className="navIcon">📢</span>
+                    通知配信
+                  </span>
+                  {headerNotifCount > 0 && <span className="navBadge">{headerNotifCount}</span>}
+                </button>
+              )}
+              {shouldShowNavItem("specialOrder") && (
+                <button className={`navItem${tab === "specialOrder" ? " active" : ""}`} onClick={() => guardedSetTab("specialOrder")}>
+                  <span className="navMain">
+                    <span className="navIcon">📄</span>
+                    定型外注文
+                  </span>
+                </button>
+              )}
+              {shouldShowNavItem("collection") && (
+                <button className={`navItem${tab === "collection" ? " active" : ""}`} onClick={() => guardedSetTab("collection")}>
+                  <span className="navMain">
+                    <span className="navIcon">💰</span>
+                    集金管理
+                  </span>
+                </button>
+              )}
+            </>,
           )}
 
         </aside>

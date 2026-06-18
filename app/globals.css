@@ -107,13 +107,41 @@ body {
   padding: 12px 0;
 }
 
-.navSection {
-  padding: 6px 16px 4px;
+.navSectionGroup {
+  margin-bottom: 2px;
+}
+
+.navSectionToggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 16px 6px;
   font-size: 10px;
   color: #999;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.8px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  transition: color 0.15s, background 0.15s;
+}
+
+.navSectionToggle:hover {
+  color: #666;
+  background: #f8f9fb;
+}
+
+.navSectionChevron {
+  font-size: 11px;
+  color: #aaa;
+  line-height: 1;
+}
+
+.navSectionItems {
+  overflow: hidden;
 }
 
 .navItem {

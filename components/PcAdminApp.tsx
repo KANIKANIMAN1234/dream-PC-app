@@ -40,11 +40,11 @@ const TAB_NAV_SECTION: Record<Tab, NavSectionKey> = {
   payroll: "managementAnalysis",
   sales: "managementAnalysis",
   ocr: "customersOrders",
+  collection: "customersOrders",
   leave: "employeesCollection",
   roles: "employeesCollection",
   notifications: "employeesCollection",
   specialOrder: "employeesCollection",
-  collection: "employeesCollection",
 };
 
 type RoleLevel = 1 | 2 | 3 | 4 | 5;
@@ -1691,6 +1691,14 @@ export function PcAdminApp() {
                     顧客管理
                   </span>
                 </button>
+                {shouldShowNavItem("collection") && (
+                  <button className={`navItem${tab === "collection" ? " active" : ""}`} onClick={() => guardedSetTab("collection")}>
+                    <span className="navMain">
+                      <span className="navIcon">💰</span>
+                      集金管理
+                    </span>
+                  </button>
+                )}
                 <button className={`navItem${tab === "orders" ? " active" : ""}`} onClick={() => guardedSetTab("orders")}>
                   <span className="navMain">
                     <span className="navIcon">📋</span>
@@ -1773,7 +1781,7 @@ export function PcAdminApp() {
 
           {renderNavSection(
             "employeesCollection",
-            "従業員・集金",
+            "従業員",
             <>
               {shouldShowNavItem("leave") && (
                 <button
@@ -1815,14 +1823,6 @@ export function PcAdminApp() {
                   <span className="navMain">
                     <span className="navIcon">📄</span>
                     定型外注文
-                  </span>
-                </button>
-              )}
-              {shouldShowNavItem("collection") && (
-                <button className={`navItem${tab === "collection" ? " active" : ""}`} onClick={() => guardedSetTab("collection")}>
-                  <span className="navMain">
-                    <span className="navIcon">💰</span>
-                    集金管理
                   </span>
                 </button>
               )}

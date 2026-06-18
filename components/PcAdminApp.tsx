@@ -11,7 +11,6 @@ import {
   demoWeeklyAttendance,
   isDemoModeEnabled,
 } from "@/lib/demoAttendanceData";
-import type { ReflectionResult } from "@/lib/aiReflection";
 import { statusLabel } from "@/lib/labels";
 
 type Tab =
@@ -28,8 +27,7 @@ type Tab =
   | "sales"
   | "collection"
   | "specialOrder"
-  | "payroll"
-  | "aiReflection";
+  | "payroll";
 
 type RoleLevel = 1 | 2 | 3 | 4 | 5;
 
@@ -451,14 +449,6 @@ export function PcAdminApp() {
   const [payrollIsDemo, setPayrollIsDemo] = useState(false);
   const [payrollNote, setPayrollNote] = useState<string | null>(null);
   const [attendanceEmployeeFilter, setAttendanceEmployeeFilter] = useState("all");
-  const [reflectionTitle, setReflectionTitle] = useState("6/19 ドリームさん打合せ 感想戦");
-  const [reflectionDate, setReflectionDate] = useState(new Date().toISOString().slice(0, 10));
-  const [reflectionParticipants, setReflectionParticipants] = useState("永松さん、井上TAKE、経理担当者");
-  const [reflectionNotes, setReflectionNotes] = useState(
-    "PCA CSV出力形式の確認\niPad 2台購入（武蔵野・本社）\n契約書締結を早めに\n9月前に経理テスト目標",
-  );
-  const [reflectionResult, setReflectionResult] = useState<ReflectionResult | null>(null);
-  const [isGeneratingReflection, setIsGeneratingReflection] = useState(false);
 
   const pendingFixCount = fixes.filter((row) => row.status === "pending").length;
   const pendingLeaveCount = leaves.filter((row) => row.status === "pending").length;
@@ -480,10 +470,9 @@ export function PcAdminApp() {
     collection: 2,
     specialOrder: 2,
     payroll: 3,
-    aiReflection: 3,
   };
 
-  const attendanceOnlyTabs: Tab[] = ["attendanceFix", "payroll", "leave", "roles", "notifications", "aiReflection"];
+  const attendanceOnlyTabs: Tab[] = ["attendanceFix", "payroll", "leave", "roles", "notifications"];
 
   function shouldShowNavItem(target: Tab) {
     if (!attendanceDemoScope) return true;
@@ -1498,62 +1487,6 @@ export function PcAdminApp() {
     URL.revokeObjectURL(url);
   }
 
-  async function generateAiReflection() {
-    setIsGeneratingReflection(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/admin/ai-reflection", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: reflectionTitle,
-          meetingDate: reflectionDate,
-          participants: reflectionParticipants,
-          notes: reflectionNotes,
-          context: "meeting",
-        }),
-      });
-      const json = (await res.json()) as { ok: boolean; message?: string } & ReflectionResult;
-      if (!json.ok) {
-        setError(json.message ?? "AI振り返り生成失敗");
-        return;
-      }
-      setReflectionResult(json);
-    } catch {
-      setError("AI振り返りAPI通信に失敗しました。");
-    } finally {
-      setIsGeneratingReflection(false);
-    }
-  }
-
-  function exportReflectionMarkdown() {
-    if (!reflectionResult) return;
-    const body = [
-      `# ${reflectionTitle}`,
-      "",
-      reflectionResult.summary,
-      "",
-      "## 決定事項",
-      ...reflectionResult.decisions.map((item) => `- ${item}`),
-      "",
-      "## 宿題・TODO",
-      ...reflectionResult.todos.map((item) => `- ${item}`),
-      "",
-      "## 確認事項",
-      ...reflectionResult.openQuestions.map((item) => `- ${item}`),
-      "",
-      "## 次アクション",
-      ...reflectionResult.nextActions.map((item) => `- ${item}`),
-    ].join("\n");
-    const blob = new Blob([body], { type: "text/markdown;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `ai02_reflection_${reflectionDate}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
   function exportPcaCsv() {
     if (payrollRows.length === 0) {
       setError("PCA出力対象の勤怠データがありません。");
@@ -1757,18 +1690,6 @@ export function PcAdminApp() {
                 <span className="navIcon">🧾</span>
                 経理・給与連携
               </span>
-            </button>
-          )}
-          {shouldShowNavItem("aiReflection") && (
-            <button
-              className={`navItem${tab === "aiReflection" ? " active" : ""}`}
-              onClick={() => guardedSetTab("aiReflection")}
-            >
-              <span className="navMain">
-                <span className="navIcon">✨</span>
-                感想戦 AI振り返り
-              </span>
-              <span className="navBadge subtle">任意</span>
             </button>
           )}
           {shouldShowNavItem("sales") && (
@@ -2809,101 +2730,6 @@ export function PcAdminApp() {
                   )}
                 </tbody>
               </table>
-            </section>
-          )}
-
-          {tab === "aiReflection" && (
-            <section className="panel">
-              {renderPageHeader(
-                "AI-02",
-                "感想戦 AI振り返り（任意）",
-                <>
-                  <button type="button" className="primary" onClick={() => void generateAiReflection()} disabled={isGeneratingReflection}>
-                    {isGeneratingReflection ? "生成中..." : "AIで振り返り生成"}
-                  </button>
-                  {reflectionResult && (
-                    <button type="button" onClick={exportReflectionMarkdown}>
-                      Markdown出力
-                    </button>
-                  )}
-                </>
-              )}
-
-              <div className="infoBox">
-                <strong>任意機能（AI-02）</strong>
-                <p>
-                  打合せやデモ後の「感想戦」メモを入力すると、決定事項・宿題・確認事項・次アクションに自動整理します。
-                  6/19打合せ後の議事録たたき台作成にも利用できます。
-                </p>
-              </div>
-
-              <div className="formGrid2">
-                <label>
-                  打合せ名
-                  <input value={reflectionTitle} onChange={(e) => setReflectionTitle(e.target.value)} />
-                </label>
-                <label>
-                  日付
-                  <input type="date" value={reflectionDate} onChange={(e) => setReflectionDate(e.target.value)} />
-                </label>
-                <label className="fullWidth">
-                  参加者
-                  <input value={reflectionParticipants} onChange={(e) => setReflectionParticipants(e.target.value)} />
-                </label>
-                <label className="fullWidth">
-                  感想戦メモ（箇条書き可）
-                  <textarea
-                    className="noticeTextarea"
-                    value={reflectionNotes}
-                    onChange={(e) => setReflectionNotes(e.target.value)}
-                    placeholder="決定したこと、宿題、気になった点を自由に入力"
-                  />
-                </label>
-              </div>
-
-              {reflectionResult && (
-                <div className="reflectionResult">
-                  <h3>AI振り返り結果</h3>
-                  <p className="reflectionSummary">{reflectionResult.summary}</p>
-                  <div className="reflectionGrid">
-                    <div className="reflectionCard">
-                      <h4>決定事項</h4>
-                      <ul>
-                        {reflectionResult.decisions.map((item) => (
-                          <li key={item}>{item}</li>
-                        ))}
-                      </ul>
-                    </div>
-                    <div className="reflectionCard">
-                      <h4>宿題・TODO</h4>
-                      <ul>
-                        {reflectionResult.todos.map((item) => (
-                          <li key={item}>{item}</li>
-                        ))}
-                      </ul>
-                    </div>
-                    <div className="reflectionCard">
-                      <h4>確認事項</h4>
-                      <ul>
-                        {reflectionResult.openQuestions.map((item) => (
-                          <li key={item}>{item}</li>
-                        ))}
-                      </ul>
-                    </div>
-                    <div className="reflectionCard">
-                      <h4>次アクション</h4>
-                      <ul>
-                        {reflectionResult.nextActions.map((item) => (
-                          <li key={item}>{item}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  </div>
-                  {reflectionResult.isDemo && (
-                    <p className="muted">テンプレートベースのデモ生成です。本番ではLLM API連携に差し替え可能です。</p>
-                  )}
-                </div>
-              )}
             </section>
           )}
 

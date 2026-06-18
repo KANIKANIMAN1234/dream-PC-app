@@ -2,6 +2,17 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import {
+  demoEmployees,
+  demoFixes,
+  demoLeaves,
+  demoPaidLeaveRows,
+  demoPayrollRows,
+  demoWeeklyAttendance,
+  isDemoModeEnabled,
+} from "@/lib/demoAttendanceData";
+import type { ReflectionResult } from "@/lib/aiReflection";
+import { statusLabel } from "@/lib/labels";
 
 type Tab =
   | "customers"
@@ -16,7 +27,9 @@ type Tab =
   | "ocr"
   | "sales"
   | "collection"
-  | "specialOrder";
+  | "specialOrder"
+  | "payroll"
+  | "aiReflection";
 
 type RoleLevel = 1 | 2 | 3 | 4 | 5;
 
@@ -177,6 +190,17 @@ type SalesTotals = {
   unpaidCount: number;
 };
 
+type PayrollRow = {
+  employee_code: string;
+  employee_name: string;
+  work_days: number;
+  paid_leave_days: number;
+  absence_days: number;
+  late_count: number;
+  early_leave_count: number;
+  overtime_hours: number;
+};
+
 type CollectionRow = {
   id: string;
   billing_month: string;
@@ -256,6 +280,15 @@ type OrderChangeRow = {
   createdAt: string;
 };
 
+type AuditLogRow = {
+  id: string;
+  category: string;
+  action: string;
+  target: string;
+  detail: string;
+  at: string;
+};
+
 type SpecialOrderRow = {
   id: string;
   flyerName: string;
@@ -310,9 +343,14 @@ function statusPillClass(status: string) {
   return "statusPill";
 }
 
+const attendanceDemoScope = isDemoModeEnabled();
+
 export function PcAdminApp() {
-  const [tab, setTab] = useState<Tab>("customers");
+  const [tab, setTab] = useState<Tab>(attendanceDemoScope ? "attendanceFix" : "customers");
   const [error, setError] = useState<string | null>(null);
+  const [demoNotice, setDemoNotice] = useState<string | null>(
+    attendanceDemoScope ? "デモモード: 勤怠・経理向け画面を表示中（NEXT_PUBLIC_DEMO_SCOPE=attendance）" : null,
+  );
   const [currentRoleLevel, setCurrentRoleLevel] = useState<RoleLevel>(3);
 
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -402,11 +440,25 @@ export function PcAdminApp() {
   const [specialFax, setSpecialFax] = useState("");
   const [specialDue, setSpecialDue] = useState("");
   const [specialQty, setSpecialQty] = useState("100");
+  const [auditLogs, setAuditLogs] = useState<AuditLogRow[]>([]);
   const [orderQtyByProduct, setOrderQtyByProduct] = useState<Record<string, string>>({});
   const [procurementRecords, setProcurementRecords] = useState<ProcurementRecord[]>([]);
   const [deliveryDate, setDeliveryDate] = useState(new Date().toISOString().slice(0, 10));
   const [routeAssignments, setRouteAssignments] = useState<Record<string, string>>({});
   const [bulkAssigneeId, setBulkAssigneeId] = useState("");
+  const [payrollMonth, setPayrollMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [payrollRows, setPayrollRows] = useState<PayrollRow[]>([]);
+  const [payrollIsDemo, setPayrollIsDemo] = useState(false);
+  const [payrollNote, setPayrollNote] = useState<string | null>(null);
+  const [attendanceEmployeeFilter, setAttendanceEmployeeFilter] = useState("all");
+  const [reflectionTitle, setReflectionTitle] = useState("6/19 ドリームさん打合せ 感想戦");
+  const [reflectionDate, setReflectionDate] = useState(new Date().toISOString().slice(0, 10));
+  const [reflectionParticipants, setReflectionParticipants] = useState("永松さん、井上TAKE、経理担当者");
+  const [reflectionNotes, setReflectionNotes] = useState(
+    "PCA CSV出力形式の確認\niPad 2台購入（武蔵野・本社）\n契約書締結を早めに\n9月前に経理テスト目標",
+  );
+  const [reflectionResult, setReflectionResult] = useState<ReflectionResult | null>(null);
+  const [isGeneratingReflection, setIsGeneratingReflection] = useState(false);
 
   const pendingFixCount = fixes.filter((row) => row.status === "pending").length;
   const pendingLeaveCount = leaves.filter((row) => row.status === "pending").length;
@@ -427,7 +479,16 @@ export function PcAdminApp() {
     sales: 3,
     collection: 2,
     specialOrder: 2,
+    payroll: 3,
+    aiReflection: 3,
   };
+
+  const attendanceOnlyTabs: Tab[] = ["attendanceFix", "payroll", "leave", "roles", "notifications", "aiReflection"];
+
+  function shouldShowNavItem(target: Tab) {
+    if (!attendanceDemoScope) return true;
+    return attendanceOnlyTabs.includes(target);
+  }
 
   function canAccessTab(target: Tab) {
     return currentRoleLevel >= tabRequiredRoleLevel[target];
@@ -435,6 +496,8 @@ export function PcAdminApp() {
 
   const canViewCustomerContact = currentRoleLevel >= 3;
   const canViewFaxNumber = currentRoleLevel >= 3;
+  const canViewCollectionSensitive = currentRoleLevel >= 3;
+  const canEditCollectionDetail = currentRoleLevel >= 2;
 
   function maskText(value: string, visible: boolean) {
     if (visible) return value;
@@ -497,6 +560,7 @@ export function PcAdminApp() {
       loadSpecialOrders(),
       loadRouteAssignments(weekStart),
       loadProcurementPlans(),
+      loadAuditLogs(),
     ]);
   }
 
@@ -567,15 +631,29 @@ export function PcAdminApp() {
   async function loadFixes() {
     const res = await fetch("/api/admin/attendance-corrections");
     const json = await res.json();
-    if (!json.ok) return setError(json.message ?? "修正申請取得失敗");
-    setFixes(json.rows);
+    if (!json.ok) {
+      if (attendanceDemoScope) {
+        setFixes(demoFixes());
+        return;
+      }
+      return setError(json.message ?? "修正申請取得失敗");
+    }
+    const rows = json.rows ?? [];
+    setFixes(rows.length === 0 && attendanceDemoScope ? demoFixes() : rows);
   }
 
   async function loadLeaves() {
     const res = await fetch("/api/admin/leave-requests");
     const json = await res.json();
-    if (!json.ok) return setError(json.message ?? "休暇申請取得失敗");
-    setLeaves(json.rows);
+    if (!json.ok) {
+      if (attendanceDemoScope) {
+        setLeaves(demoLeaves());
+        return;
+      }
+      return setError(json.message ?? "休暇申請取得失敗");
+    }
+    const rows = json.rows ?? [];
+    setLeaves(rows.length === 0 && attendanceDemoScope ? demoLeaves() : rows);
   }
 
   async function loadRoles() {
@@ -588,23 +666,63 @@ export function PcAdminApp() {
   async function loadEmployees() {
     const res = await fetch("/api/admin/employees");
     const json = await res.json();
-    if (!json.ok) return setError(json.message ?? "従業員取得失敗");
-    setEmployees(json.rows ?? []);
+    if (!json.ok) {
+      if (attendanceDemoScope) {
+        setEmployees(demoEmployees());
+        setEmployeeAssignments([]);
+        return;
+      }
+      return setError(json.message ?? "従業員取得失敗");
+    }
+    const rows = json.rows ?? [];
+    setEmployees(rows.length === 0 && attendanceDemoScope ? demoEmployees() : rows);
     setEmployeeAssignments(json.assignments ?? []);
   }
 
   async function loadWeeklyAttendance(targetWeekStart: string) {
     const res = await fetch(`/api/admin/attendance-weekly?weekStart=${encodeURIComponent(targetWeekStart)}`);
     const json = await res.json();
-    if (!json.ok) return setError(json.message ?? "週次勤怠取得失敗");
-    setWeeklyRows(json.rows ?? []);
+    if (!json.ok) {
+      if (attendanceDemoScope) {
+        setWeeklyRows(demoWeeklyAttendance(targetWeekStart));
+        return;
+      }
+      return setError(json.message ?? "週次勤怠取得失敗");
+    }
+    const rows = json.rows ?? [];
+    setWeeklyRows(rows.length === 0 && attendanceDemoScope ? demoWeeklyAttendance(targetWeekStart) : rows);
   }
 
   async function loadPaidLeaveSummary(targetYear: number) {
     const res = await fetch(`/api/admin/paid-leave-summary?year=${targetYear}`);
     const json = await res.json();
-    if (!json.ok) return setError(json.message ?? "有休サマリ取得失敗");
-    setPaidLeaveRows(json.rows ?? []);
+    if (!json.ok) {
+      if (attendanceDemoScope) {
+        setPaidLeaveRows(demoPaidLeaveRows());
+        return;
+      }
+      return setError(json.message ?? "有休サマリ取得失敗");
+    }
+    const rows = json.rows ?? [];
+    setPaidLeaveRows(rows.length === 0 && attendanceDemoScope ? demoPaidLeaveRows() : rows);
+  }
+
+  async function loadPayrollSummary(targetMonth: string) {
+    const res = await fetch(`/api/admin/payroll-export?month=${encodeURIComponent(targetMonth)}`);
+    const json = await res.json();
+    if (!json.ok) {
+      if (attendanceDemoScope) {
+        setPayrollRows(demoPayrollRows());
+        setPayrollIsDemo(true);
+        setPayrollNote("API未接続のためデモデータを表示しています。");
+        return;
+      }
+      return setError(json.message ?? "給与連携データ取得失敗");
+    }
+    const rows = json.rows ?? [];
+    setPayrollRows(rows.length === 0 && attendanceDemoScope ? demoPayrollRows() : rows);
+    setPayrollIsDemo(Boolean(json.isDemo));
+    setPayrollNote(typeof json.note === "string" ? json.note : null);
   }
 
   async function loadShiftRequests() {
@@ -619,6 +737,23 @@ export function PcAdminApp() {
     const json = await res.json();
     if (!json.ok) return setError(json.message ?? "年間休日取得失敗");
     setHolidayRows(json.rows ?? []);
+  }
+
+  async function loadAuditLogs() {
+    const res = await fetch("/api/admin/audit-logs?limit=80");
+    const json = await res.json();
+    if (!json.ok) return setError(json.message ?? "操作ログ取得失敗");
+    setAuditLogs(json.rows ?? []);
+  }
+
+  async function appendAuditLog(category: string, action: string, target: string, detail: string) {
+    const res = await fetch("/api/admin/audit-logs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ category, action, target, detail }),
+    });
+    const json = await res.json();
+    if (json.ok) await loadAuditLogs();
   }
 
   async function loadSalesSummary() {
@@ -662,6 +797,7 @@ export function PcAdminApp() {
     });
     const json = await res.json();
     if (!json.ok) return setError(json.message ?? "修正申請処理失敗");
+    await appendAuditLog("勤怠", action === "approved" ? "修正申請承認" : "修正申請却下", id, `request:${id}`);
     await loadFixes();
   }
 
@@ -674,6 +810,7 @@ export function PcAdminApp() {
     });
     const json = await res.json();
     if (!json.ok) return setError(json.message ?? "休暇申請処理失敗");
+    await appendAuditLog("休暇", action === "approved" ? "休暇申請承認" : "休暇申請却下", id, `request:${id}`);
     await loadLeaves();
   }
 
@@ -686,6 +823,7 @@ export function PcAdminApp() {
     });
     const json = await res.json();
     if (!json.ok) return setError(json.message ?? "シフト希望処理失敗");
+    await appendAuditLog("シフト", action === "approved" ? "シフト希望承認" : "シフト希望却下", id, `request:${id}`);
     await loadShiftRequests();
   }
 
@@ -708,6 +846,7 @@ export function PcAdminApp() {
     });
     const json = await res.json();
     if (!json.ok) return setError(json.message ?? "集金結果保存失敗");
+    await appendAuditLog("集金", "集金結果保存", targetId, `status:${edit.status}`);
     await loadCollectionSummary(collectionMonth);
     setError(null);
   }
@@ -721,6 +860,7 @@ export function PcAdminApp() {
     });
     const json = await res.json();
     if (!json.ok) return setError(json.message ?? "注文更新失敗");
+    await appendAuditLog("注文", "注文ステータス更新", id, `status:${status}`);
     await loadOrders();
   }
 
@@ -758,6 +898,7 @@ export function PcAdminApp() {
       return;
     }
     await loadOrderChanges();
+    await appendAuditLog("注文", "注文変更登録", mode === "single" ? orderChangeCustomer.trim() : bulkCourse, content);
     setOrderChangeContent("");
     setBulkChangeContent("");
     setOrderChangeMemo("");
@@ -789,6 +930,7 @@ export function PcAdminApp() {
     });
     const json = await res.json();
     if (!json.ok) return setError(json.message ?? "役割作成失敗");
+    await appendAuditLog("従業員", "役割追加", roleCode, roleName);
     setRoleCode("");
     setRoleName("");
     setRoleDescription("");
@@ -814,6 +956,7 @@ export function PcAdminApp() {
         setError(json.message ?? "顧客保存失敗");
         return;
       }
+      await appendAuditLog("顧客", customerForm.id ? "顧客更新" : "顧客登録", customerForm.customerCode, customerForm.name);
       await loadCustomers();
       setCustomerForm(createEmptyCustomerForm());
       setCustomerView("list");
@@ -842,6 +985,7 @@ export function PcAdminApp() {
         setError(json.message ?? "従業員保存失敗");
         return;
       }
+      await appendAuditLog("従業員", employeeForm.id ? "従業員更新" : "従業員登録", employeeForm.employeeCode4, employeeForm.name);
       await loadEmployees();
       setEmployeeForm(createEmptyEmployeeForm());
       setEmployeeView("list");
@@ -977,6 +1121,11 @@ export function PcAdminApp() {
     });
   }, [weekStart]);
 
+  const filteredWeeklyRows = useMemo(() => {
+    if (attendanceEmployeeFilter === "all") return weeklyRows;
+    return weeklyRows.filter((row) => row.employee_id === attendanceEmployeeFilter);
+  }, [weeklyRows, attendanceEmployeeFilter]);
+
   useEffect(() => {
     void loadWeeklyAttendance(weekStart);
   }, [weekStart]);
@@ -984,6 +1133,10 @@ export function PcAdminApp() {
   useEffect(() => {
     void loadPaidLeaveSummary(paidLeaveYear);
   }, [paidLeaveYear]);
+
+  useEffect(() => {
+    void loadPayrollSummary(payrollMonth);
+  }, [payrollMonth]);
 
   useEffect(() => {
     void loadCollectionSummary(collectionMonth);
@@ -1096,6 +1249,7 @@ export function PcAdminApp() {
       setError(json.message ?? "定型外注文保存失敗");
       return;
     }
+    await appendAuditLog("定型外", "定型外注文登録", specialName.trim(), specialVendor.trim());
     await loadSpecialOrders();
     setSpecialName("");
     setSpecialVendor("");
@@ -1127,6 +1281,7 @@ export function PcAdminApp() {
       setError(json.message ?? "定型外注文更新失敗");
       return;
     }
+    await appendAuditLog("定型外", "定型外注文ステータス更新", id, `status:${status}`);
     await loadSpecialOrders();
   }
 
@@ -1145,6 +1300,7 @@ export function PcAdminApp() {
       setError(json.message ?? "休日追加失敗");
       return;
     }
+    await appendAuditLog("休日", "休日追加", newHolidayDate, newHolidayName.trim());
     setNewHolidayDate("");
     setNewHolidayName("");
     await loadHolidayMaster();
@@ -1177,6 +1333,7 @@ export function PcAdminApp() {
       setError(json.message ?? "FAX送信失敗");
       return;
     }
+    await appendAuditLog("FAX", "定型外FAX送信", id, "result:success");
     await loadSpecialOrders();
     setError(null);
   }
@@ -1223,6 +1380,7 @@ export function PcAdminApp() {
       setError(json.message ?? "コース担当保存失敗");
       return;
     }
+    await appendAuditLog("配達", "コース担当保存", weekStart, `routes:${Object.keys(routeAssignments).length}`);
     setError(null);
   }
 
@@ -1340,6 +1498,105 @@ export function PcAdminApp() {
     URL.revokeObjectURL(url);
   }
 
+  async function generateAiReflection() {
+    setIsGeneratingReflection(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/admin/ai-reflection", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: reflectionTitle,
+          meetingDate: reflectionDate,
+          participants: reflectionParticipants,
+          notes: reflectionNotes,
+          context: "meeting",
+        }),
+      });
+      const json = (await res.json()) as { ok: boolean; message?: string } & ReflectionResult;
+      if (!json.ok) {
+        setError(json.message ?? "AI振り返り生成失敗");
+        return;
+      }
+      setReflectionResult(json);
+    } catch {
+      setError("AI振り返りAPI通信に失敗しました。");
+    } finally {
+      setIsGeneratingReflection(false);
+    }
+  }
+
+  function exportReflectionMarkdown() {
+    if (!reflectionResult) return;
+    const body = [
+      `# ${reflectionTitle}`,
+      "",
+      reflectionResult.summary,
+      "",
+      "## 決定事項",
+      ...reflectionResult.decisions.map((item) => `- ${item}`),
+      "",
+      "## 宿題・TODO",
+      ...reflectionResult.todos.map((item) => `- ${item}`),
+      "",
+      "## 確認事項",
+      ...reflectionResult.openQuestions.map((item) => `- ${item}`),
+      "",
+      "## 次アクション",
+      ...reflectionResult.nextActions.map((item) => `- ${item}`),
+    ].join("\n");
+    const blob = new Blob([body], { type: "text/markdown;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ai02_reflection_${reflectionDate}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportPcaCsv() {
+    if (payrollRows.length === 0) {
+      setError("PCA出力対象の勤怠データがありません。");
+      return;
+    }
+    const [year, month] = payrollMonth.split("-");
+    const header = [
+      "対象年",
+      "対象月",
+      "社員コード",
+      "氏名",
+      "出勤日数",
+      "有休日数",
+      "欠勤日数",
+      "遅刻回数",
+      "早退回数",
+      "残業時間",
+    ];
+    const lines = payrollRows.map((row) => [
+      year,
+      month,
+      row.employee_code,
+      row.employee_name,
+      String(row.work_days),
+      String(row.paid_leave_days),
+      String(row.absence_days),
+      String(row.late_count),
+      String(row.early_leave_count),
+      String(row.overtime_hours),
+    ]);
+    const csvRows = [header, ...lines]
+      .map((cols) => cols.map((v) => `"${String(v).replaceAll('"', '""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob([`\uFEFF${csvRows}`], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `pca_kintai_${payrollMonth.replace("-", "")}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setError(null);
+  }
+
   function exportPaidLeaveCsv() {
     if (paidLeaveRows.length === 0) {
       setError("出力対象の有休データがありません。");
@@ -1435,114 +1692,160 @@ export function PcAdminApp() {
 
       <div className="layout">
         <aside className="sidebar">
-          <div className="navSection">顧客・注文</div>
-          <button
-            className={`navItem${tab === "customers" ? " active" : ""}`}
-            onClick={() => guardedSetTab("customers")}
-          >
-            <span className="navMain">
-              <span className="navIcon">👥</span>
-              顧客管理
-            </span>
-          </button>
-          <button className={`navItem${tab === "orders" ? " active" : ""}`} onClick={() => guardedSetTab("orders")}>
-            <span className="navMain">
-              <span className="navIcon">📋</span>
-              注文管理
-            </span>
-          </button>
+          {shouldShowNavItem("customers") && (
+            <>
+              <div className="navSection">顧客・注文</div>
+              <button
+                className={`navItem${tab === "customers" ? " active" : ""}`}
+                onClick={() => guardedSetTab("customers")}
+              >
+                <span className="navMain">
+                  <span className="navIcon">👥</span>
+                  顧客管理
+                </span>
+              </button>
+              <button className={`navItem${tab === "orders" ? " active" : ""}`} onClick={() => guardedSetTab("orders")}>
+                <span className="navMain">
+                  <span className="navIcon">📋</span>
+                  注文管理
+                </span>
+              </button>
+            </>
+          )}
 
-          <div className="navSection">商品・物流</div>
-          <button className={`navItem${tab === "procurement" ? " active" : ""}`} onClick={() => guardedSetTab("procurement")}>
-            <span className="navMain">
-              <span className="navIcon">📦</span>
-              発注管理
-            </span>
-            <span className="navBadge">!</span>
-          </button>
-          <button className={`navItem${tab === "inventory" ? " active" : ""}`} onClick={() => guardedSetTab("inventory")}>
-            <span className="navMain">
-              <span className="navIcon">🏪</span>
-              在庫管理
-            </span>
-          </button>
-          <button className={`navItem${tab === "delivery" ? " active" : ""}`} onClick={() => guardedSetTab("delivery")}>
-            <span className="navMain">
-              <span className="navIcon">🚚</span>
-              配達管理
-            </span>
-          </button>
+          {shouldShowNavItem("procurement") && (
+            <>
+              <div className="navSection">商品・物流</div>
+              <button className={`navItem${tab === "procurement" ? " active" : ""}`} onClick={() => guardedSetTab("procurement")}>
+                <span className="navMain">
+                  <span className="navIcon">📦</span>
+                  発注管理
+                </span>
+                <span className="navBadge">!</span>
+              </button>
+              <button className={`navItem${tab === "inventory" ? " active" : ""}`} onClick={() => guardedSetTab("inventory")}>
+                <span className="navMain">
+                  <span className="navIcon">🏪</span>
+                  在庫管理
+                </span>
+              </button>
+              <button className={`navItem${tab === "delivery" ? " active" : ""}`} onClick={() => guardedSetTab("delivery")}>
+                <span className="navMain">
+                  <span className="navIcon">🚚</span>
+                  配達管理
+                </span>
+              </button>
+            </>
+          )}
 
           <div className="navSection">管理・分析</div>
-          <button
-            className={`navItem${tab === "attendanceFix" ? " active" : ""}`}
-            onClick={() => guardedSetTab("attendanceFix")}
-          >
-            <span className="navMain">
-              <span className="navIcon">⏰</span>
-              勤怠管理
-            </span>
-            {pendingFixCount > 0 && <span className="navBadge">{pendingFixCount}</span>}
-          </button>
-          <button className={`navItem${tab === "sales" ? " active" : ""}`} onClick={() => guardedSetTab("sales")}>
-            <span className="navMain">
-              <span className="navIcon">📊</span>
-              売上分析
-            </span>
-          </button>
-          <button className={`navItem${tab === "ocr" ? " active" : ""}`} onClick={() => guardedSetTab("ocr")}>
-            <span className="navMain">
-              <span className="navIcon">🤖</span>
-              AI-OCR承認
-            </span>
-            <span className="navBadge">{mockOcrPendingCount}</span>
-          </button>
+          {shouldShowNavItem("attendanceFix") && (
+            <button
+              className={`navItem${tab === "attendanceFix" ? " active" : ""}`}
+              onClick={() => guardedSetTab("attendanceFix")}
+            >
+              <span className="navMain">
+                <span className="navIcon">⏰</span>
+                勤怠管理
+              </span>
+              {pendingFixCount > 0 && <span className="navBadge">{pendingFixCount}</span>}
+            </button>
+          )}
+          {shouldShowNavItem("payroll") && (
+            <button className={`navItem${tab === "payroll" ? " active" : ""}`} onClick={() => guardedSetTab("payroll")}>
+              <span className="navMain">
+                <span className="navIcon">🧾</span>
+                経理・給与連携
+              </span>
+            </button>
+          )}
+          {shouldShowNavItem("aiReflection") && (
+            <button
+              className={`navItem${tab === "aiReflection" ? " active" : ""}`}
+              onClick={() => guardedSetTab("aiReflection")}
+            >
+              <span className="navMain">
+                <span className="navIcon">✨</span>
+                感想戦 AI振り返り
+              </span>
+              <span className="navBadge subtle">任意</span>
+            </button>
+          )}
+          {shouldShowNavItem("sales") && (
+            <button className={`navItem${tab === "sales" ? " active" : ""}`} onClick={() => guardedSetTab("sales")}>
+              <span className="navMain">
+                <span className="navIcon">📊</span>
+                売上分析
+              </span>
+            </button>
+          )}
+          {shouldShowNavItem("ocr") && (
+            <button className={`navItem${tab === "ocr" ? " active" : ""}`} onClick={() => guardedSetTab("ocr")}>
+              <span className="navMain">
+                <span className="navIcon">🤖</span>
+                AI-OCR承認
+              </span>
+              <span className="navBadge">{mockOcrPendingCount}</span>
+            </button>
+          )}
 
           <div className="navSection">従業員・集金</div>
-          <button
-            className={`navItem${tab === "leave" ? " active" : ""}`}
-            onClick={() => guardedSetTab("leave")}
-          >
-            <span className="navMain">
-              <span className="navIcon">🏖️</span>
-              休暇申請
-            </span>
-          </button>
-          <button
-            className={`navItem${tab === "roles" ? " active" : ""}`}
-            onClick={() => guardedSetTab("roles")}
-          >
-            <span className="navMain">
-              <span className="navIcon">👤</span>
-              従業員管理
-            </span>
-          </button>
-          <button
-            className={`navItem${tab === "notifications" ? " active" : ""}`}
-            onClick={() => guardedSetTab("notifications")}
-          >
-            <span className="navMain">
-              <span className="navIcon">📢</span>
-              通知配信
-            </span>
-            {headerNotifCount > 0 && <span className="navBadge">{headerNotifCount}</span>}
-          </button>
-          <button className={`navItem${tab === "specialOrder" ? " active" : ""}`} onClick={() => guardedSetTab("specialOrder")}>
-            <span className="navMain">
-              <span className="navIcon">📄</span>
-              定型外注文
-            </span>
-          </button>
-          <button className={`navItem${tab === "collection" ? " active" : ""}`} onClick={() => guardedSetTab("collection")}>
-            <span className="navMain">
-              <span className="navIcon">💰</span>
-              集金管理
-            </span>
-          </button>
+          {shouldShowNavItem("leave") && (
+            <button
+              className={`navItem${tab === "leave" ? " active" : ""}`}
+              onClick={() => guardedSetTab("leave")}
+            >
+              <span className="navMain">
+                <span className="navIcon">🏖️</span>
+                休暇申請
+              </span>
+              {pendingLeaveCount > 0 && <span className="navBadge">{pendingLeaveCount}</span>}
+            </button>
+          )}
+          {shouldShowNavItem("roles") && (
+            <button
+              className={`navItem${tab === "roles" ? " active" : ""}`}
+              onClick={() => guardedSetTab("roles")}
+            >
+              <span className="navMain">
+                <span className="navIcon">👤</span>
+                従業員管理
+              </span>
+            </button>
+          )}
+          {shouldShowNavItem("notifications") && (
+            <button
+              className={`navItem${tab === "notifications" ? " active" : ""}`}
+              onClick={() => guardedSetTab("notifications")}
+            >
+              <span className="navMain">
+                <span className="navIcon">📢</span>
+                通知配信
+              </span>
+              {headerNotifCount > 0 && <span className="navBadge">{headerNotifCount}</span>}
+            </button>
+          )}
+          {shouldShowNavItem("specialOrder") && (
+            <button className={`navItem${tab === "specialOrder" ? " active" : ""}`} onClick={() => guardedSetTab("specialOrder")}>
+              <span className="navMain">
+                <span className="navIcon">📄</span>
+                定型外注文
+              </span>
+            </button>
+          )}
+          {shouldShowNavItem("collection") && (
+            <button className={`navItem${tab === "collection" ? " active" : ""}`} onClick={() => guardedSetTab("collection")}>
+              <span className="navMain">
+                <span className="navIcon">💰</span>
+                集金管理
+              </span>
+            </button>
+          )}
 
         </aside>
 
         <div className="content">
+          {demoNotice && <p className="demoBanner">{demoNotice}</p>}
           {error && <p className="panel">{error}</p>}
 
           {tab === "customers" && (
@@ -2189,9 +2492,21 @@ export function PcAdminApp() {
                   <button type="button" onClick={() => moveWeek(-1)}>
                     ◀ 前週
                   </button>
+                  <span className="weekLabel">{weekStart} 週</span>
                   <button type="button" onClick={() => moveWeek(1)}>
                     次週 ▶
                   </button>
+                  <select
+                    value={attendanceEmployeeFilter}
+                    onChange={(e) => setAttendanceEmployeeFilter(e.target.value)}
+                  >
+                    <option value="all">全員</option>
+                    {weeklyRows.map((row) => (
+                      <option key={row.employee_id} value={row.employee_id}>
+                        {row.employee_name}
+                      </option>
+                    ))}
+                  </select>
                 </>
               )}
               <table className="weeklyTable">
@@ -2204,7 +2519,7 @@ export function PcAdminApp() {
                   </tr>
                 </thead>
                 <tbody>
-                  {weeklyRows.map((row) => (
+                  {filteredWeeklyRows.map((row) => (
                     <tr key={row.employee_id}>
                       <td>{row.employee_name}</td>
                       {weekDays.map((d) => {
@@ -2261,11 +2576,11 @@ export function PcAdminApp() {
                       <td>{row.id.slice(0, 8)}</td>
                       <td>{row.target_date}</td>
                       <td>{row.request_type}</td>
-                      <td>{row.target_event_type}</td>
+                      <td>{statusLabel(row.target_event_type)}</td>
                       <td>{row.requested_at_time ?? "-"}</td>
                       <td>{row.reason}</td>
                       <td>
-                        <span className={statusPillClass(row.status)}>{row.status}</span>
+                        <span className={statusPillClass(row.status)}>{statusLabel(row.status)}</span>
                       </td>
                       <td className="actions">
                         <button className="approve" onClick={() => void processFix(row.id, "approved")}>
@@ -2317,7 +2632,7 @@ export function PcAdminApp() {
                       <td>{row.end_date}</td>
                       <td>{row.reason ?? "-"}</td>
                       <td>
-                        <span className={statusPillClass(row.status)}>{row.status}</span>
+                        <span className={statusPillClass(row.status)}>{statusLabel(row.status)}</span>
                       </td>
                       <td className="actions">
                         <button className="approve" onClick={() => void processLeave(row.id, "approved")}>
@@ -2329,6 +2644,13 @@ export function PcAdminApp() {
                       </td>
                     </tr>
                   ))}
+                  {visibleLeaves.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="muted">
+                        対象の休暇申請はありません。
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
 
@@ -2490,6 +2812,195 @@ export function PcAdminApp() {
             </section>
           )}
 
+          {tab === "aiReflection" && (
+            <section className="panel">
+              {renderPageHeader(
+                "AI-02",
+                "感想戦 AI振り返り（任意）",
+                <>
+                  <button type="button" className="primary" onClick={() => void generateAiReflection()} disabled={isGeneratingReflection}>
+                    {isGeneratingReflection ? "生成中..." : "AIで振り返り生成"}
+                  </button>
+                  {reflectionResult && (
+                    <button type="button" onClick={exportReflectionMarkdown}>
+                      Markdown出力
+                    </button>
+                  )}
+                </>
+              )}
+
+              <div className="infoBox">
+                <strong>任意機能（AI-02）</strong>
+                <p>
+                  打合せやデモ後の「感想戦」メモを入力すると、決定事項・宿題・確認事項・次アクションに自動整理します。
+                  6/19打合せ後の議事録たたき台作成にも利用できます。
+                </p>
+              </div>
+
+              <div className="formGrid2">
+                <label>
+                  打合せ名
+                  <input value={reflectionTitle} onChange={(e) => setReflectionTitle(e.target.value)} />
+                </label>
+                <label>
+                  日付
+                  <input type="date" value={reflectionDate} onChange={(e) => setReflectionDate(e.target.value)} />
+                </label>
+                <label className="fullWidth">
+                  参加者
+                  <input value={reflectionParticipants} onChange={(e) => setReflectionParticipants(e.target.value)} />
+                </label>
+                <label className="fullWidth">
+                  感想戦メモ（箇条書き可）
+                  <textarea
+                    className="noticeTextarea"
+                    value={reflectionNotes}
+                    onChange={(e) => setReflectionNotes(e.target.value)}
+                    placeholder="決定したこと、宿題、気になった点を自由に入力"
+                  />
+                </label>
+              </div>
+
+              {reflectionResult && (
+                <div className="reflectionResult">
+                  <h3>AI振り返り結果</h3>
+                  <p className="reflectionSummary">{reflectionResult.summary}</p>
+                  <div className="reflectionGrid">
+                    <div className="reflectionCard">
+                      <h4>決定事項</h4>
+                      <ul>
+                        {reflectionResult.decisions.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="reflectionCard">
+                      <h4>宿題・TODO</h4>
+                      <ul>
+                        {reflectionResult.todos.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="reflectionCard">
+                      <h4>確認事項</h4>
+                      <ul>
+                        {reflectionResult.openQuestions.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="reflectionCard">
+                      <h4>次アクション</h4>
+                      <ul>
+                        {reflectionResult.nextActions.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                  {reflectionResult.isDemo && (
+                    <p className="muted">テンプレートベースのデモ生成です。本番ではLLM API連携に差し替え可能です。</p>
+                  )}
+                </div>
+              )}
+            </section>
+          )}
+
+          {tab === "payroll" && (
+            <section className="panel">
+              {renderPageHeader(
+                "M-06-PCA",
+                "経理・給与連携（PCA）",
+                <>
+                  <input type="month" value={payrollMonth} onChange={(e) => setPayrollMonth(e.target.value)} />
+                  <button type="button" onClick={exportPcaCsv}>
+                    PCA取込CSV出力
+                  </button>
+                  <button type="button" className="primary" onClick={() => void loadPayrollSummary(payrollMonth)}>
+                    再読込
+                  </button>
+                </>
+              )}
+
+              <div className="infoBox">
+                <strong>PCA給与ソフト連携</strong>
+                <p>
+                  従来のバッジ処理（テレタイム）と同一レイアウトのCSVを出力します。経理担当者がPCA側で取込テストを行い、
+                  出勤日数・有休日数・残業時間が正しく反映されることを確認してください。
+                </p>
+                {payrollIsDemo && payrollNote && <p className="muted">{payrollNote}</p>}
+              </div>
+
+              <div className="salesStats">
+                <div className="salesCard">
+                  <div className="salesLabel">対象月</div>
+                  <div className="salesValue">{payrollMonth}</div>
+                </div>
+                <div className="salesCard">
+                  <div className="salesLabel">対象人数</div>
+                  <div className="salesValue">{payrollRows.length}名</div>
+                </div>
+                <div className="salesCard">
+                  <div className="salesLabel">合計出勤日数</div>
+                  <div className="salesValue">{payrollRows.reduce((sum, row) => sum + row.work_days, 0)}日</div>
+                </div>
+                <div className="salesCard">
+                  <div className="salesLabel">合計残業時間</div>
+                  <div className="salesValue">{payrollRows.reduce((sum, row) => sum + row.overtime_hours, 0).toFixed(1)}h</div>
+                </div>
+              </div>
+
+              <table>
+                <thead>
+                  <tr>
+                    <th>社員コード</th>
+                    <th>氏名</th>
+                    <th>出勤日数</th>
+                    <th>有休日数</th>
+                    <th>欠勤日数</th>
+                    <th>遅刻回数</th>
+                    <th>早退回数</th>
+                    <th>残業時間(h)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {payrollRows.map((row) => (
+                    <tr key={row.employee_code}>
+                      <td>{row.employee_code}</td>
+                      <td>{row.employee_name}</td>
+                      <td>{row.work_days}</td>
+                      <td>{row.paid_leave_days}</td>
+                      <td>{row.absence_days}</td>
+                      <td>{row.late_count}</td>
+                      <td>{row.early_leave_count}</td>
+                      <td>{row.overtime_hours}</td>
+                    </tr>
+                  ))}
+                  {payrollRows.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="muted">
+                        対象月の勤怠データがありません。
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+
+              <hr className="sectionDivider" />
+              {renderPageHeader("M-06-PCA-PREVIEW", "PCA取込プレビュー（先頭3行）")}
+              <pre className="csvPreview">
+                {[
+                  "対象年,対象月,社員コード,氏名,出勤日数,有休日数,欠勤日数,遅刻回数,早退回数,残業時間",
+                  ...payrollRows.slice(0, 3).map((row) => {
+                    const [year, month] = payrollMonth.split("-");
+                    return `${year},${month},${row.employee_code},${row.employee_name},${row.work_days},${row.paid_leave_days},${row.absence_days},${row.late_count},${row.early_leave_count},${row.overtime_hours}`;
+                  }),
+                ].join("\n")}
+              </pre>
+            </section>
+          )}
+
           {tab === "sales" && (
             <section className="panel">
               {renderPageHeader("M-07", "売上分析")}
@@ -2574,10 +3085,11 @@ export function PcAdminApp() {
                     <th>顧客コード</th>
                     <th>顧客名</th>
                     <th>請求額</th>
-                    <th>受取額</th>
-                    <th>おつり</th>
-                    <th>方法</th>
-                    <th>担当</th>
+                    <th>受取額{canViewCollectionSensitive ? "" : "（マスク）"}</th>
+                    <th>おつり{canViewCollectionSensitive ? "" : "（マスク）"}</th>
+                    <th>方法{canViewCollectionSensitive ? "" : "（マスク）"}</th>
+                    <th>担当{canViewCollectionSensitive ? "" : "（マスク）"}</th>
+                    <th>メモ{canViewCollectionSensitive ? "" : "（マスク）"}</th>
                     <th>状態</th>
                     <th>操作</th>
                   </tr>
@@ -2590,72 +3102,108 @@ export function PcAdminApp() {
                       <td>{row.customer_name}</td>
                       <td>¥{Number(row.due_amount ?? 0).toLocaleString("ja-JP")}</td>
                       <td>
-                        <input
-                          value={collectionEdits[row.id]?.receivedAmount ?? ""}
-                          onChange={(e) =>
-                            setCollectionEdits((prev) => ({
-                              ...prev,
-                              [row.id]: {
-                                ...prev[row.id],
-                                receivedAmount: e.target.value.replace(/[^\d]/g, ""),
-                              },
-                            }))
-                          }
-                          placeholder="0"
-                        />
+                        {canViewCollectionSensitive ? (
+                          <input
+                            value={collectionEdits[row.id]?.receivedAmount ?? ""}
+                            onChange={(e) =>
+                              setCollectionEdits((prev) => ({
+                                ...prev,
+                                [row.id]: {
+                                  ...prev[row.id],
+                                  receivedAmount: e.target.value.replace(/[^\d]/g, ""),
+                                },
+                              }))
+                            }
+                            placeholder="0"
+                          />
+                        ) : (
+                          <span>{maskText(String(row.received_amount ?? 0), false)}</span>
+                        )}
                       </td>
                       <td>
-                        <input
-                          value={collectionEdits[row.id]?.changeAmount ?? ""}
-                          onChange={(e) =>
-                            setCollectionEdits((prev) => ({
-                              ...prev,
-                              [row.id]: {
-                                ...prev[row.id],
-                                changeAmount: e.target.value.replace(/[^\d]/g, ""),
-                              },
-                            }))
-                          }
-                          placeholder="0"
-                        />
+                        {canViewCollectionSensitive ? (
+                          <input
+                            value={collectionEdits[row.id]?.changeAmount ?? ""}
+                            onChange={(e) =>
+                              setCollectionEdits((prev) => ({
+                                ...prev,
+                                [row.id]: {
+                                  ...prev[row.id],
+                                  changeAmount: e.target.value.replace(/[^\d]/g, ""),
+                                },
+                              }))
+                            }
+                            placeholder="0"
+                          />
+                        ) : (
+                          <span>{maskText(String(row.change_amount ?? 0), false)}</span>
+                        )}
                       </td>
                       <td>
-                        <select
-                          value={collectionEdits[row.id]?.method ?? ""}
-                          onChange={(e) =>
-                            setCollectionEdits((prev) => ({
-                              ...prev,
-                              [row.id]: {
-                                ...prev[row.id],
-                                method: e.target.value,
-                              },
-                            }))
-                          }
-                        >
-                          <option value="">未選択</option>
-                          <option value="cash">現金</option>
-                          <option value="bank">口座振替</option>
-                          <option value="card">クレジット</option>
-                        </select>
+                        {canViewCollectionSensitive ? (
+                          <select
+                            value={collectionEdits[row.id]?.method ?? ""}
+                            onChange={(e) =>
+                              setCollectionEdits((prev) => ({
+                                ...prev,
+                                [row.id]: {
+                                  ...prev[row.id],
+                                  method: e.target.value,
+                                },
+                              }))
+                            }
+                          >
+                            <option value="">未選択</option>
+                            <option value="cash">現金</option>
+                            <option value="bank">口座振替</option>
+                            <option value="card">クレジット</option>
+                          </select>
+                        ) : (
+                          <span>{maskText(row.method || "-", false)}</span>
+                        )}
                       </td>
                       <td>
-                        <input
-                          value={collectionEdits[row.id]?.collectedBy ?? ""}
-                          onChange={(e) =>
-                            setCollectionEdits((prev) => ({
-                              ...prev,
-                              [row.id]: {
-                                ...prev[row.id],
-                                collectedBy: e.target.value,
-                              },
-                            }))
-                          }
-                          placeholder="担当者"
-                        />
+                        {canViewCollectionSensitive ? (
+                          <input
+                            value={collectionEdits[row.id]?.collectedBy ?? ""}
+                            onChange={(e) =>
+                              setCollectionEdits((prev) => ({
+                                ...prev,
+                                [row.id]: {
+                                  ...prev[row.id],
+                                  collectedBy: e.target.value,
+                                },
+                              }))
+                            }
+                            placeholder="担当者"
+                          />
+                        ) : (
+                          <span>{maskText(row.collected_by || "-", false)}</span>
+                        )}
+                      </td>
+                      <td>
+                        {canViewCollectionSensitive ? (
+                          <input
+                            value={collectionEdits[row.id]?.memo ?? ""}
+                            onChange={(e) =>
+                              setCollectionEdits((prev) => ({
+                                ...prev,
+                                [row.id]: {
+                                  ...prev[row.id],
+                                  memo: e.target.value,
+                                },
+                              }))
+                            }
+                            placeholder="メモ"
+                          />
+                        ) : (
+                          <span>{maskText(row.memo || "-", false)}</span>
+                        )}
                       </td>
                       <td>
                         <select
                           value={collectionEdits[row.id]?.status ?? row.status}
+                          disabled={!canEditCollectionDetail}
                           onChange={(e) =>
                             setCollectionEdits((prev) => ({
                               ...prev,
@@ -2672,7 +3220,12 @@ export function PcAdminApp() {
                         </select>
                       </td>
                       <td className="actions">
-                        <button type="button" className="primary" onClick={() => void saveCollectionResult(row.id)}>
+                        <button
+                          type="button"
+                          className="primary"
+                          disabled={!canEditCollectionDetail}
+                          onClick={() => void saveCollectionResult(row.id)}
+                        >
                           保存
                         </button>
                       </td>
@@ -2687,10 +3240,11 @@ export function PcAdminApp() {
                 <thead>
                   <tr>
                     <th>顧客</th>
-                    <th>受取額</th>
-                    <th>おつり</th>
-                    <th>方法</th>
-                    <th>担当</th>
+                    <th>受取額{canViewCollectionSensitive ? "" : "（マスク）"}</th>
+                    <th>おつり{canViewCollectionSensitive ? "" : "（マスク）"}</th>
+                    <th>方法{canViewCollectionSensitive ? "" : "（マスク）"}</th>
+                    <th>担当{canViewCollectionSensitive ? "" : "（マスク）"}</th>
+                    <th>メモ{canViewCollectionSensitive ? "" : "（マスク）"}</th>
                     <th>更新日時</th>
                   </tr>
                 </thead>
@@ -2702,10 +3256,19 @@ export function PcAdminApp() {
                         <td>
                           {row.customer_code} {row.customer_name}
                         </td>
-                        <td>¥{Number(row.received_amount ?? 0).toLocaleString("ja-JP")}</td>
-                        <td>¥{Number(row.change_amount ?? 0).toLocaleString("ja-JP")}</td>
-                        <td>{row.method || "-"}</td>
-                        <td>{row.collected_by || "-"}</td>
+                        <td>
+                          {canViewCollectionSensitive
+                            ? `¥${Number(row.received_amount ?? 0).toLocaleString("ja-JP")}`
+                            : maskText(String(row.received_amount ?? 0), false)}
+                        </td>
+                        <td>
+                          {canViewCollectionSensitive
+                            ? `¥${Number(row.change_amount ?? 0).toLocaleString("ja-JP")}`
+                            : maskText(String(row.change_amount ?? 0), false)}
+                        </td>
+                        <td>{canViewCollectionSensitive ? row.method || "-" : maskText(row.method || "-", false)}</td>
+                        <td>{canViewCollectionSensitive ? row.collected_by || "-" : maskText(row.collected_by || "-", false)}</td>
+                        <td>{canViewCollectionSensitive ? row.memo || "-" : maskText(row.memo || "-", false)}</td>
                         <td>{row.collected_at ? new Date(row.collected_at).toLocaleString("ja-JP") : "-"}</td>
                       </tr>
                     ))}
@@ -3085,6 +3648,41 @@ export function PcAdminApp() {
                 />
                 <button onClick={() => void createRole()}>追加</button>
               </div>
+
+              <hr className="sectionDivider" />
+              <h3>操作ログ（最新）</h3>
+              {currentRoleLevel < 4 && <p className="muted">操作ログの閲覧は権限Lv4以上です。</p>}
+              {currentRoleLevel >= 4 && (
+                <table>
+                  <thead>
+                    <tr>
+                      <th>日時</th>
+                      <th>カテゴリ</th>
+                      <th>操作</th>
+                      <th>対象</th>
+                      <th>詳細</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {auditLogs.map((row) => (
+                      <tr key={row.id}>
+                        <td>{new Date(row.at).toLocaleString("ja-JP")}</td>
+                        <td>{row.category}</td>
+                        <td>{row.action}</td>
+                        <td>{row.target || "-"}</td>
+                        <td>{row.detail || "-"}</td>
+                      </tr>
+                    ))}
+                    {auditLogs.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="muted">
+                          操作ログはありません。
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              )}
             </section>
           )}
 

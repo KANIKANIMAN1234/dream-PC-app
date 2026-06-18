@@ -506,6 +506,50 @@ select {
   color: #546;
 }
 
+.attendanceSubTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.attendanceSubTab {
+  border: 1px solid #c8d4e3;
+  background: #fff;
+  color: #334;
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 0.88rem;
+}
+
+.attendanceSubTab:hover {
+  background: #f0f4ff;
+  border-color: #9bb8dc;
+}
+
+.attendanceSubTab.active {
+  background: #e8f0ff;
+  border-color: #2d6a9f;
+  color: #1e3a5f;
+  font-weight: 600;
+}
+
+.weeklyCellWarn {
+  background: #fff6e8;
+}
+
+.missingPunchMark {
+  color: #b45309;
+  font-weight: 700;
+  font-size: 0.78rem;
+}
+
+.alertActual {
+  color: #b63d3d;
+  font-weight: 600;
+}
+
 .mandatoryText {
   font-size: 0.8rem;
   color: #555;

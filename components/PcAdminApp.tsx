@@ -11,6 +11,8 @@ import {
   isDemoModeEnabled,
 } from "@/lib/demoAttendanceData";
 import { statusLabel } from "@/lib/labels";
+import type { Agreement36Alert, MissingPunchIssue, MonthlyWorkSummary } from "@/lib/attendance/types";
+import { agreement36AlertKindLabel } from "@/lib/attendance/agreement-36";
 
 type Tab =
   | "customers"
@@ -38,9 +40,9 @@ const TAB_NAV_SECTION: Record<Tab, NavSectionKey> = {
   delivery: "productsLogistics",
   attendanceFix: "managementAnalysis",
   payroll: "managementAnalysis",
-  sales: "managementAnalysis",
   ocr: "customersOrders",
   collection: "customersOrders",
+  sales: "customersOrders",
   leave: "employeesCollection",
   roles: "employeesCollection",
   notifications: "employeesCollection",
@@ -404,6 +406,11 @@ export function PcAdminApp() {
   const [showPendingFixOnly, setShowPendingFixOnly] = useState(true);
   const [showPendingLeaveOnly, setShowPendingLeaveOnly] = useState(true);
   const [showPendingShiftOnly, setShowPendingShiftOnly] = useState(true);
+  const [attendanceSubTab, setAttendanceSubTab] = useState<"weekly" | "missing" | "monthly" | "alerts">("weekly");
+  const [missingIssues, setMissingIssues] = useState<MissingPunchIssue[]>([]);
+  const [monthlySummaries, setMonthlySummaries] = useState<MonthlyWorkSummary[]>([]);
+  const [agreement36Alerts, setAgreement36Alerts] = useState<Agreement36Alert[]>([]);
+  const [attendanceInsightMonth, setAttendanceInsightMonth] = useState(new Date().toISOString().slice(0, 7));
   const [weeklyRows, setWeeklyRows] = useState<WeeklyAttendanceRow[]>([]);
   const [paidLeaveRows, setPaidLeaveRows] = useState<PaidLeaveRow[]>([]);
   const [shiftRequests, setShiftRequests] = useState<ShiftRequestRow[]>([]);
@@ -711,6 +718,34 @@ export function PcAdminApp() {
     if (!json.ok) return setError(json.message ?? "従業員取得失敗");
     setEmployees(json.rows ?? []);
     setEmployeeAssignments(json.assignments ?? []);
+  }
+
+  async function loadMissingPunches(fromDate: string, toDate: string) {
+    const res = await fetch(
+      `/api/admin/attendance-missing?fromDate=${encodeURIComponent(fromDate)}&toDate=${encodeURIComponent(toDate)}`,
+    );
+    const json = await res.json();
+    if (!json.ok) return setError(json.message ?? "打刻漏れ取得失敗");
+    setMissingIssues(json.issues ?? []);
+  }
+
+  async function loadMonthlySummaries(targetMonth: string) {
+    const [year, month] = targetMonth.split("-");
+    const res = await fetch(
+      `/api/admin/attendance-monthly-summary?year=${encodeURIComponent(year)}&month=${encodeURIComponent(month)}`,
+    );
+    const json = await res.json();
+    if (!json.ok) return setError(json.message ?? "月次集計取得失敗");
+    setMonthlySummaries(json.summaries ?? []);
+  }
+
+  async function loadAgreement36Alerts(referenceDate: string) {
+    const res = await fetch(
+      `/api/admin/agreement-36-alerts?referenceDate=${encodeURIComponent(referenceDate)}`,
+    );
+    const json = await res.json();
+    if (!json.ok) return setError(json.message ?? "36協定アラート取得失敗");
+    setAgreement36Alerts(json.alerts ?? []);
   }
 
   async function loadWeeklyAttendance(targetWeekStart: string) {
@@ -1170,6 +1205,29 @@ export function PcAdminApp() {
   useEffect(() => {
     void loadWeeklyAttendance(weekStart);
   }, [weekStart]);
+
+  useEffect(() => {
+    if (tab !== "attendanceFix") return;
+    if (attendanceSubTab === "missing") {
+      const end = new Date(`${weekStart}T00:00:00`);
+      end.setDate(end.getDate() + 6);
+      void loadMissingPunches(weekStart, end.toISOString().slice(0, 10));
+    }
+    if (attendanceSubTab === "monthly") {
+      void loadMonthlySummaries(attendanceInsightMonth);
+    }
+    if (attendanceSubTab === "alerts") {
+      void loadAgreement36Alerts(new Date().toISOString().slice(0, 10));
+    }
+  }, [tab, attendanceSubTab, weekStart, attendanceInsightMonth]);
+
+  function getWeeklyCellIssue(employeeId: string, dateKey: string) {
+    const cell = filteredWeeklyRows.find((row) => row.employee_id === employeeId)?.days[dateKey];
+    if (!cell || cell.leave) return null;
+    if (!cell.start && cell.end) return "出勤なし";
+    if (cell.start && !cell.end) return "退勤なし";
+    return null;
+  }
 
   useEffect(() => {
     void loadPaidLeaveSummary(paidLeaveYear);
@@ -1714,6 +1772,14 @@ export function PcAdminApp() {
                     <span className="navBadge">{mockOcrPendingCount}</span>
                   </button>
                 )}
+                {shouldShowNavItem("sales") && (
+                  <button className={`navItem${tab === "sales" ? " active" : ""}`} onClick={() => guardedSetTab("sales")}>
+                    <span className="navMain">
+                      <span className="navIcon">📊</span>
+                      売上分析
+                    </span>
+                  </button>
+                )}
               </>,
             )}
 
@@ -1765,14 +1831,6 @@ export function PcAdminApp() {
                   <span className="navMain">
                     <span className="navIcon">🧾</span>
                     経理・給与連携
-                  </span>
-                </button>
-              )}
-              {shouldShowNavItem("sales") && (
-                <button className={`navItem${tab === "sales" ? " active" : ""}`} onClick={() => guardedSetTab("sales")}>
-                  <span className="navMain">
-                    <span className="navIcon">📊</span>
-                    売上分析
                   </span>
                 </button>
               )}
@@ -2472,115 +2530,316 @@ export function PcAdminApp() {
 
           {tab === "attendanceFix" && (
             <section className="panel">
-              {renderPageHeader(
-                "M-06",
-                "勤怠一覧（週次カレンダー）",
+              <div className="attendanceSubTabs">
+                <button
+                  type="button"
+                  className={`attendanceSubTab${attendanceSubTab === "weekly" ? " active" : ""}`}
+                  onClick={() => setAttendanceSubTab("weekly")}
+                >
+                  週次カレンダー
+                </button>
+                <button
+                  type="button"
+                  className={`attendanceSubTab${attendanceSubTab === "missing" ? " active" : ""}`}
+                  onClick={() => setAttendanceSubTab("missing")}
+                >
+                  打刻漏れ
+                </button>
+                <button
+                  type="button"
+                  className={`attendanceSubTab${attendanceSubTab === "monthly" ? " active" : ""}`}
+                  onClick={() => setAttendanceSubTab("monthly")}
+                >
+                  月次集計
+                </button>
+                <button
+                  type="button"
+                  className={`attendanceSubTab${attendanceSubTab === "alerts" ? " active" : ""}`}
+                  onClick={() => setAttendanceSubTab("alerts")}
+                >
+                  36協定アラート
+                </button>
+              </div>
+
+              {attendanceSubTab === "weekly" && (
                 <>
-                  <button type="button" onClick={() => moveWeek(-1)}>
-                    ◀ 前週
-                  </button>
-                  <span className="weekLabel">{weekStart} 週</span>
-                  <button type="button" onClick={() => moveWeek(1)}>
-                    次週 ▶
-                  </button>
-                  <select
-                    value={attendanceEmployeeFilter}
-                    onChange={(e) => setAttendanceEmployeeFilter(e.target.value)}
-                  >
-                    <option value="all">全員</option>
-                    {weeklyRows.map((row) => (
-                      <option key={row.employee_id} value={row.employee_id}>
-                        {row.employee_name}
-                      </option>
-                    ))}
-                  </select>
+                  {renderPageHeader(
+                    "M-06",
+                    "勤怠一覧（週次カレンダー）",
+                    <>
+                      <button type="button" onClick={() => moveWeek(-1)}>
+                        ◀ 前週
+                      </button>
+                      <span className="weekLabel">{weekStart} 週</span>
+                      <button type="button" onClick={() => moveWeek(1)}>
+                        次週 ▶
+                      </button>
+                      <select
+                        value={attendanceEmployeeFilter}
+                        onChange={(e) => setAttendanceEmployeeFilter(e.target.value)}
+                      >
+                        <option value="all">全員</option>
+                        {weeklyRows.map((row) => (
+                          <option key={row.employee_id} value={row.employee_id}>
+                            {row.employee_name}
+                          </option>
+                        ))}
+                      </select>
+                    </>,
+                  )}
+                  <table className="weeklyTable">
+                    <thead>
+                      <tr>
+                        <th>氏名</th>
+                        {weekDays.map((d) => (
+                          <th key={d.key}>{d.label}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredWeeklyRows.map((row) => (
+                        <tr key={row.employee_id}>
+                          <td>{row.employee_name}</td>
+                          {weekDays.map((d) => {
+                            const cell = row.days[d.key];
+                            const issue = getWeeklyCellIssue(row.employee_id, d.key);
+                            return (
+                              <td key={d.key} className={issue ? "weeklyCellWarn" : undefined}>
+                                {!cell && "-"}
+                                {cell && (
+                                  <div className="weeklyCell">
+                                    {cell.leave && <div className="leaveMark">休</div>}
+                                    {issue && <div className="missingPunchMark">{issue}</div>}
+                                    {cell.start && <div className="timeIn">出 {cell.start}</div>}
+                                    {cell.end && <div className="timeOut">退 {cell.end}</div>}
+                                    {cell.out && <div className="timeSub">外 {cell.out}</div>}
+                                    {cell.work && <div className="timeSub">業 {cell.work}</div>}
+                                  </div>
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  <hr className="sectionDivider" />
+                  {renderPageHeader(
+                    "M-06-FIX",
+                    "勤怠修正申請（承認/却下）",
+                    <label className="checkLabel">
+                      <input
+                        type="checkbox"
+                        checked={showPendingFixOnly}
+                        onChange={(e) => setShowPendingFixOnly(e.target.checked)}
+                      />
+                      承認待ちのみ表示
+                    </label>,
+                  )}
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>申請ID</th>
+                        <th>対象日</th>
+                        <th>種別</th>
+                        <th>区分</th>
+                        <th>時刻</th>
+                        <th>理由</th>
+                        <th>状態</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {visibleFixes.map((row) => (
+                        <tr key={row.id}>
+                          <td>{row.id.slice(0, 8)}</td>
+                          <td>{row.target_date}</td>
+                          <td>{row.request_type}</td>
+                          <td>{statusLabel(row.target_event_type)}</td>
+                          <td>{row.requested_at_time ?? "-"}</td>
+                          <td>{row.reason}</td>
+                          <td>
+                            <span className={statusPillClass(row.status)}>{statusLabel(row.status)}</span>
+                          </td>
+                          <td className="actions">
+                            <button className="approve" onClick={() => void processFix(row.id, "approved")}>
+                              承認
+                            </button>
+                            <button className="reject" onClick={() => void processFix(row.id, "rejected")}>
+                              却下
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </>
               )}
-              <table className="weeklyTable">
-                <thead>
-                  <tr>
-                    <th>氏名</th>
-                    {weekDays.map((d) => (
-                      <th key={d.key}>{d.label}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredWeeklyRows.map((row) => (
-                    <tr key={row.employee_id}>
-                      <td>{row.employee_name}</td>
-                      {weekDays.map((d) => {
-                        const cell = row.days[d.key];
-                        return (
-                          <td key={d.key}>
-                            {!cell && "-"}
-                            {cell && (
-                              <div className="weeklyCell">
-                                {cell.leave && <div className="leaveMark">休</div>}
-                                {cell.start && <div className="timeIn">出 {cell.start}</div>}
-                                {cell.end && <div className="timeOut">退 {cell.end}</div>}
-                                {cell.out && <div className="timeSub">外 {cell.out}</div>}
-                                {cell.work && <div className="timeSub">業 {cell.work}</div>}
-                              </div>
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
 
-              <hr className="sectionDivider" />
-              {renderPageHeader(
-                "M-06-FIX",
-                "勤怠修正申請（承認/却下）",
-                <label className="checkLabel">
-                  <input
-                    type="checkbox"
-                    checked={showPendingFixOnly}
-                    onChange={(e) => setShowPendingFixOnly(e.target.checked)}
-                  />
-                  承認待ちのみ表示
-                </label>
+              {attendanceSubTab === "missing" && (
+                <>
+                  {renderPageHeader(
+                    "M-06-MISS",
+                    "打刻漏れ",
+                    <>
+                      <button type="button" onClick={() => moveWeek(-1)}>
+                        ◀ 前週
+                      </button>
+                      <span className="weekLabel">{weekStart} 週</span>
+                      <button type="button" onClick={() => moveWeek(1)}>
+                        次週 ▶
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const end = new Date(`${weekStart}T00:00:00`);
+                          end.setDate(end.getDate() + 6);
+                          void loadMissingPunches(weekStart, end.toISOString().slice(0, 10));
+                        }}
+                      >
+                        再読込
+                      </button>
+                    </>,
+                  )}
+                  <p className="mandatoryText">
+                    出勤または退勤のどちらか一方のみ打刻がある日を表示します（打刻0件の日は対象外）。
+                  </p>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>勤務日</th>
+                        <th>氏名</th>
+                        <th>社員コード</th>
+                        <th>内容</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {missingIssues.map((row) => (
+                        <tr key={`${row.employee_id}-${row.work_date}`}>
+                          <td>{row.work_date}</td>
+                          <td>{row.employee_name}</td>
+                          <td>{row.employee_code}</td>
+                          <td>
+                            <span className="missingPunchMark">{row.issue}</span>
+                          </td>
+                        </tr>
+                      ))}
+                      {missingIssues.length === 0 && (
+                        <tr>
+                          <td colSpan={4} className="muted">
+                            指定期間に打刻漏れはありません。
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </>
               )}
-              <table>
-                <thead>
-                  <tr>
-                    <th>申請ID</th>
-                    <th>対象日</th>
-                    <th>種別</th>
-                    <th>区分</th>
-                    <th>時刻</th>
-                    <th>理由</th>
-                    <th>状態</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleFixes.map((row) => (
-                    <tr key={row.id}>
-                      <td>{row.id.slice(0, 8)}</td>
-                      <td>{row.target_date}</td>
-                      <td>{row.request_type}</td>
-                      <td>{statusLabel(row.target_event_type)}</td>
-                      <td>{row.requested_at_time ?? "-"}</td>
-                      <td>{row.reason}</td>
-                      <td>
-                        <span className={statusPillClass(row.status)}>{statusLabel(row.status)}</span>
-                      </td>
-                      <td className="actions">
-                        <button className="approve" onClick={() => void processFix(row.id, "approved")}>
-                          承認
-                        </button>
-                        <button className="reject" onClick={() => void processFix(row.id, "rejected")}>
-                          却下
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+
+              {attendanceSubTab === "monthly" && (
+                <>
+                  {renderPageHeader(
+                    "M-06-MON",
+                    "月次集計",
+                    <>
+                      <input
+                        type="month"
+                        value={attendanceInsightMonth}
+                        onChange={(e) => setAttendanceInsightMonth(e.target.value)}
+                      />
+                      <button type="button" onClick={() => void loadMonthlySummaries(attendanceInsightMonth)}>
+                        再読込
+                      </button>
+                    </>,
+                  )}
+                  <p className="mandatoryText">
+                    残業時間は1日8時間超を簡易集計しています（就業規則連動は今後対応）。
+                  </p>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>氏名</th>
+                        <th>社員コード</th>
+                        <th>出勤日数</th>
+                        <th>労働時間</th>
+                        <th>残業時間</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {monthlySummaries.map((row) => (
+                        <tr key={row.employee_id}>
+                          <td>{row.employee_name}</td>
+                          <td>{row.employee_code}</td>
+                          <td>{row.work_days}</td>
+                          <td>{row.work_time}</td>
+                          <td>{row.overtime_time}</td>
+                        </tr>
+                      ))}
+                      {monthlySummaries.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="muted">
+                            対象月の勤怠データがありません。
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </>
+              )}
+
+              {attendanceSubTab === "alerts" && (
+                <>
+                  {renderPageHeader(
+                    "M-06-36",
+                    "36協定アラート",
+                    <button
+                      type="button"
+                      onClick={() => void loadAgreement36Alerts(new Date().toISOString().slice(0, 10))}
+                    >
+                      再評価
+                    </button>,
+                  )}
+                  <p className="mandatoryText">
+                    評価基準日はJST前日。法定外労働は8時間超の簡易集計です。LINE通知は未接続です。
+                  </p>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>種別</th>
+                        <th>氏名</th>
+                        <th>項目</th>
+                        <th>基準</th>
+                        <th>実績</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {agreement36Alerts.map((row, idx) => (
+                        <tr key={`${row.employee_id}-${row.kind}-${idx}`}>
+                          <td>{agreement36AlertKindLabel(row.kind)}</td>
+                          <td>{row.employee_name}</td>
+                          <td>{row.label}</td>
+                          <td>
+                            {row.threshold}
+                            {row.unit === "hours" ? "時間" : "回"}
+                          </td>
+                          <td className="alertActual">
+                            {row.actual}
+                            {row.unit === "hours" ? "時間" : "回"}
+                          </td>
+                        </tr>
+                      ))}
+                      {agreement36Alerts.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="muted">
+                            現在、基準を超えたアラートはありません。
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </>
+              )}
             </section>
           )}
 

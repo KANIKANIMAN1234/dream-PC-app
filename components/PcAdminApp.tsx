@@ -32,6 +32,25 @@ type Tab =
 
 type NavSectionKey = "customersOrders" | "productsLogistics" | "managementAnalysis" | "employeesCollection";
 
+function toLocalYmd(date: Date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function parseLocalYmd(ymd: string) {
+  return new Date(`${ymd}T00:00:00`);
+}
+
+function mondayOfWeek(date: Date) {
+  const d = new Date(date);
+  const day = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  d.setDate(d.getDate() + diff);
+  return d;
+}
+
 type RoleLevel = 1 | 2 | 3 | 4 | 5;
 
 type Customer = {
@@ -401,13 +420,7 @@ export function PcAdminApp() {
   const [newHolidayDate, setNewHolidayDate] = useState("");
   const [newHolidayName, setNewHolidayName] = useState("");
   const [paidLeaveYear, setPaidLeaveYear] = useState(new Date().getFullYear());
-  const [weekStart, setWeekStart] = useState(() => {
-    const now = new Date();
-    const day = now.getDay();
-    const diffToMonday = day === 0 ? -6 : 1 - day;
-    now.setDate(now.getDate() + diffToMonday);
-    return now.toISOString().slice(0, 10);
-  });
+  const [weekStart, setWeekStart] = useState(() => toLocalYmd(mondayOfWeek(new Date())));
   const [employeeQuery, setEmployeeQuery] = useState("");
   const [employeeStatusFilter, setEmployeeStatusFilter] = useState<"all" | "active" | "retired">("all");
   const [employeeView, setEmployeeView] = useState<"list" | "form">("list");
@@ -455,7 +468,7 @@ export function PcAdminApp() {
   const [auditLogs, setAuditLogs] = useState<AuditLogRow[]>([]);
   const [orderQtyByProduct, setOrderQtyByProduct] = useState<Record<string, string>>({});
   const [procurementRecords, setProcurementRecords] = useState<ProcurementRecord[]>([]);
-  const [deliveryDate, setDeliveryDate] = useState(new Date().toISOString().slice(0, 10));
+  const [deliveryDate, setDeliveryDate] = useState(() => toLocalYmd(new Date()));
   const [routeAssignments, setRouteAssignments] = useState<Record<string, string>>({});
   const [bulkAssigneeId, setBulkAssigneeId] = useState("");
   const [payrollMonth, setPayrollMonth] = useState(new Date().toISOString().slice(0, 7));
@@ -1164,12 +1177,12 @@ export function PcAdminApp() {
   }, [shiftRequests, showPendingShiftOnly]);
 
   const weekDays = useMemo(() => {
-    const base = new Date(`${weekStart}T00:00:00`);
+    const base = parseLocalYmd(weekStart);
     return Array.from({ length: 7 }).map((_, idx) => {
       const d = new Date(base);
       d.setDate(d.getDate() + idx);
       return {
-        key: d.toISOString().slice(0, 10),
+        key: toLocalYmd(d),
         label: d.toLocaleDateString("ja-JP", { month: "2-digit", day: "2-digit", weekday: "short" }),
       };
     });
@@ -1187,9 +1200,9 @@ export function PcAdminApp() {
   useEffect(() => {
     if (tab !== "attendanceFix") return;
     if (attendanceSubTab === "missing") {
-      const end = new Date(`${weekStart}T00:00:00`);
+      const end = parseLocalYmd(weekStart);
       end.setDate(end.getDate() + 6);
-      void loadMissingPunches(weekStart, end.toISOString().slice(0, 10));
+      void loadMissingPunches(weekStart, toLocalYmd(end));
     }
     if (attendanceSubTab === "monthly") {
       void loadMonthlySummaries(attendanceInsightMonth);
@@ -1228,20 +1241,14 @@ export function PcAdminApp() {
   }, [weekStart]);
 
   useEffect(() => {
-    const d = new Date(`${deliveryDate}T00:00:00`);
-    const day = d.getDay();
-    const diff = day === 0 ? -6 : 1 - day;
-    d.setDate(d.getDate() + diff);
-    const monday = d.toISOString().slice(0, 10);
-    if (monday !== weekStart) setWeekStart(monday);
-  }, [deliveryDate, weekStart]);
+    const monday = toLocalYmd(mondayOfWeek(parseLocalYmd(deliveryDate)));
+    setWeekStart(monday);
+  }, [deliveryDate]);
 
   function moveWeek(delta: number) {
-    const d = new Date(`${weekStart}T00:00:00`);
+    const d = parseLocalYmd(weekStart);
     d.setDate(d.getDate() + delta * 7);
-    const nextWeekStart = d.toISOString().slice(0, 10);
-    setWeekStart(nextWeekStart);
-    setDeliveryDate(nextWeekStart);
+    setWeekStart(toLocalYmd(d));
   }
 
   function applyNoticeTemplate(template: string) {
@@ -2671,9 +2678,9 @@ export function PcAdminApp() {
                       <button
                         type="button"
                         onClick={() => {
-                          const end = new Date(`${weekStart}T00:00:00`);
+                          const end = parseLocalYmd(weekStart);
                           end.setDate(end.getDate() + 6);
-                          void loadMissingPunches(weekStart, end.toISOString().slice(0, 10));
+                          void loadMissingPunches(weekStart, toLocalYmd(end));
                         }}
                       >
                         再読込

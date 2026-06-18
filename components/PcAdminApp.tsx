@@ -40,7 +40,7 @@ const TAB_NAV_SECTION: Record<Tab, NavSectionKey> = {
   attendanceFix: "managementAnalysis",
   payroll: "managementAnalysis",
   sales: "managementAnalysis",
-  ocr: "managementAnalysis",
+  ocr: "customersOrders",
   leave: "employeesCollection",
   roles: "employeesCollection",
   notifications: "employeesCollection",
@@ -1699,6 +1699,15 @@ export function PcAdminApp() {
                     注文管理
                   </span>
                 </button>
+                {shouldShowNavItem("ocr") && (
+                  <button className={`navItem${tab === "ocr" ? " active" : ""}`} onClick={() => guardedSetTab("ocr")}>
+                    <span className="navMain">
+                      <span className="navIcon">🤖</span>
+                      AI-OCR承認
+                    </span>
+                    <span className="navBadge">{mockOcrPendingCount}</span>
+                  </button>
+                )}
               </>,
             )}
 
@@ -1759,15 +1768,6 @@ export function PcAdminApp() {
                     <span className="navIcon">📊</span>
                     売上分析
                   </span>
-                </button>
-              )}
-              {shouldShowNavItem("ocr") && (
-                <button className={`navItem${tab === "ocr" ? " active" : ""}`} onClick={() => guardedSetTab("ocr")}>
-                  <span className="navMain">
-                    <span className="navIcon">🤖</span>
-                    AI-OCR承認
-                  </span>
-                  <span className="navBadge">{mockOcrPendingCount}</span>
                 </button>
               )}
             </>,
